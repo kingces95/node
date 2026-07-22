@@ -166,6 +166,52 @@ Data types
             UV_NONBLOCK_PIPE = 0x40
         } uv_stdio_flags;
 
+.. c:macro:: UV_STDIO_CONTAINER_MODE_MASK
+.. c:macro:: UV_STDIO_CONTAINER_GET_MODE(container)
+
+    Stdio modes are stored in :c:member:`uv_stdio_container_t.flags` and are
+    mutually exclusive. The modes are ``UV_IGNORE``, ``UV_CREATE_PIPE``,
+    ``UV_INHERIT_FD``, and ``UV_INHERIT_STREAM``.
+    ``UV_STDIO_CONTAINER_MODE_MASK`` combines the three non-zero mode flags;
+    ``UV_IGNORE`` is represented by zero. ``UV_STDIO_CONTAINER_GET_MODE()``
+    applies the mask and returns the :c:type:`uv_stdio_flags` mode selected for
+    `container` without its direction or blocking flags.
+
+    .. versionadded:: 1.53.0
+
+.. c:macro:: UV_STDIO_CONTAINER_IS_WELL_FORMED(container)
+
+    Return non-zero when `container` carries the payload required by its
+    selected mode. This checks only the container representation; it does not
+    validate whether the selected stream or file descriptor is suitable for a
+    particular child stdio slot. Call this before using a stream type predicate
+    on a container that might not carry a stream because those predicates may
+    dereference ``data.stream``.
+
+    .. versionadded:: 1.53.0
+
+.. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_NONE(container)
+.. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_FD(container)
+.. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_TCP(container)
+.. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_TTY(container)
+.. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(container)
+.. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container)
+
+    Return non-zero when `container` has the corresponding effective type.
+    The effective type is independent of pipe direction and blocking mode:
+
+    * ``UV_IGNORE`` has type ``NONE``.
+    * ``UV_INHERIT_FD`` has type ``FD``.
+    * ``UV_INHERIT_STREAM`` can classify a TCP stream, TTY stream, or standard
+      pipe stream.
+    * ``UV_CREATE_PIPE`` can classify a standard or IPC pipe stream.
+
+    The IPC predicate requires ``UV_CREATE_PIPE`` and returns zero for
+    ``UV_INHERIT_STREAM``. The standard pipe predicate recognizes both created
+    and inherited standard pipes.
+
+    .. versionadded:: 1.53.0
+
 
 Public members
 ^^^^^^^^^^^^^^

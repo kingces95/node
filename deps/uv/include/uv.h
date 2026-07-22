@@ -859,6 +859,11 @@ enum {
   UV_PIPE_NO_TRUNCATE = 1u << 0
 };
 
+typedef enum {
+  UV_PIPE_STANDARD = 0,
+  UV_PIPE_IPC = 1
+} uv_pipe_type_t;
+
 /*
  * uv_pipe_t is a subclass of uv_stream_t.
  *
@@ -872,7 +877,19 @@ struct uv_pipe_s {
   UV_PIPE_PRIVATE_FIELDS
 };
 
+#define UV_PIPE_GET_TYPE(pipe) \
+  ((pipe)->ipc ? UV_PIPE_IPC : UV_PIPE_STANDARD)
+
+#define UV_PIPE_TYPE_IS_PIPE(pipe) \
+  (UV_PIPE_GET_TYPE(pipe) == UV_PIPE_STANDARD)
+
+#define UV_PIPE_TYPE_IS_IPC(pipe) \
+  (UV_PIPE_GET_TYPE(pipe) == UV_PIPE_IPC)
+
 UV_EXTERN int uv_pipe_init(uv_loop_t*, uv_pipe_t* handle, int ipc);
+UV_EXTERN int uv_pipe_init2(uv_loop_t*,
+                            uv_pipe_t* handle,
+                            uv_pipe_type_t type);
 UV_EXTERN int uv_pipe_open(uv_pipe_t*, uv_file file);
 UV_EXTERN int uv_pipe_bind(uv_pipe_t* handle, const char* name);
 UV_EXTERN int uv_pipe_bind2(uv_pipe_t* handle,
@@ -1061,6 +1078,98 @@ typedef struct uv_stdio_container_s {
     int fd;
   } data;
 } uv_stdio_container_t;
+
+/*
+ * Stdio modes are stored in flags, but are expected to be one-hot. The mode
+ * records how the child stdio slot is supplied.
+ */
+#define UV_STDIO_CONTAINER_MODE_MASK \
+  (UV_CREATE_PIPE | UV_INHERIT_FD | UV_INHERIT_STREAM)
+
+#define UV_STDIO_CONTAINER_GET_MODE(container) \
+  ((uv_stdio_flags) ((container)->flags & UV_STDIO_CONTAINER_MODE_MASK))
+
+/*
+ * Implicit in uv_stdio_container_t are a number of types. Each type is
+ * independent of payload provenance (created vs inherited), direction (read
+ * and/or write), and blocking mode.
+ *
+ * An explicit expression of those types as an enum would be:
+ *
+ *   UV_STDIO_CONTAINER_NONE               // none
+ *   UV_STDIO_CONTAINER_FD                 // fd
+ *   UV_STDIO_CONTAINER_STREAM_TCP         // tcp
+ *   UV_STDIO_CONTAINER_STREAM_TTY         // tty
+ *   UV_STDIO_CONTAINER_STREAM_PIPE        // pipe
+ *   UV_STDIO_CONTAINER_STREAM_PIPE_IPC    // ipc
+ *
+ * Instead of introducing an enum, macros to test for each type are provided:
+ *
+ *   UV_STDIO_CONTAINER_IS_WELL_FORMED(container)
+ *   UV_STDIO_CONTAINER_TYPE_IS_NONE(container)
+ *   UV_STDIO_CONTAINER_TYPE_IS_FD(container)
+ *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_TCP(container)
+ *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_TTY(container)
+ *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(container)
+ *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container)
+ *
+ * Here are examples of activating each type pivoted by mode. The examples are
+ * provided as the stdio option to Node.js child_process.spawn().
+ *
+ *   UV_IGNORE
+ *     -> none             # No caller-provided payload; for example,
+ *                         # stdio: 'ignore'.
+ *
+ *   UV_INHERIT_FD
+ *     -> fd               # A numeric fd/handle is passed through; for example,
+ *                         # stdio: ['ignore', 2, 2] inherits stderr as stdout.
+ *
+ *   UV_CREATE_PIPE
+ *     -> pipe             # libuv creates a stdio pipe pair; for example,
+ *                         # stdio: ['pipe', 'pipe', 'pipe'].
+ *     -> ipc              # Created pipe with IPC framing enabled; for example,
+ *                         # child_process.fork() passes 'ipc' in stdio.
+ *
+ *   UV_INHERIT_STREAM
+ *     -> tcp              # Existing TCP stream handle is inherited; for
+ *                         # example, passing a net.Socket as child stdio.
+ *     -> tty              # Existing TTY stream handle is inherited; for
+ *                         # example, stdio: 'inherit' with process.stdin.
+ *     -> pipe             # Existing connected pipe endpoint is inherited; for
+ *                         # example, wiring one child.stdout to another
+ *                         # child's stdin. IPC pipes cannot be passed here.
+ */
+#define UV_STDIO_CONTAINER_IS_WELL_FORMED(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_IGNORE || \
+   UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_FD || \
+   ((UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_STREAM || \
+     UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE) && \
+    (container)->data.stream != NULL))
+
+#define UV_STDIO_CONTAINER_TYPE_IS_NONE(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_IGNORE)
+
+#define UV_STDIO_CONTAINER_TYPE_IS_FD(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_FD)
+
+#define UV_STDIO_CONTAINER_TYPE_IS_STREAM_TCP(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_STREAM && \
+   (container)->data.stream->type == UV_TCP)
+
+#define UV_STDIO_CONTAINER_TYPE_IS_STREAM_TTY(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_STREAM && \
+   (container)->data.stream->type == UV_TTY)
+
+#define UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(container) \
+  ((UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_STREAM || \
+    UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE) && \
+   (container)->data.stream->type == UV_NAMED_PIPE && \
+   UV_PIPE_TYPE_IS_PIPE((uv_pipe_t*) (container)->data.stream))
+
+#define UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE && \
+   (container)->data.stream->type == UV_NAMED_PIPE && \
+   UV_PIPE_TYPE_IS_IPC((uv_pipe_t*) (container)->data.stream))
 
 typedef struct uv_process_options_s {
   uv_exit_cb exit_cb; /* Called after the process exits. */

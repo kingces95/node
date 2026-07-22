@@ -900,6 +900,11 @@ int uv_spawn(uv_loop_t* loop,
   PROCESS_INFORMATION info;
   DWORD process_flags, cwd_len;
   BYTE* child_stdio_buffer;
+  HANDLE* handle_list;
+  LPPROC_THREAD_ATTRIBUTE_LIST attr_list;
+  int attr_list_initialized;
+  const uv_stdio_container_t* fdopt;
+  uv_pipe_t* pipe;
 
   uv__process_init(loop, process);
   process->exit_cb = options->exit_cb;
@@ -1035,7 +1040,7 @@ int uv_spawn(uv_loop_t* loop,
       (options->flags & UV_PROCESS_WINDOWS_HIDE)) {
     /* Avoid creating console window if stdio is not inherited. */
     for (i = 0; i < options->stdio_count; i++) {
-      if (options->stdio[i].flags & UV_INHERIT_FD)
+      if (UV_STDIO_CONTAINER_TYPE_IS_FD(&options->stdio[i]))
         break;
       if (i == options->stdio_count - 1)
         process_flags |= CREATE_NO_WINDOW;
@@ -1116,13 +1121,12 @@ int uv_spawn(uv_loop_t* loop,
 
   /* Set IPC pid to all IPC pipes. */
   for (i = 0; i < options->stdio_count; i++) {
-    const uv_stdio_container_t* fdopt = &options->stdio[i];
-    if (fdopt->flags & UV_CREATE_PIPE &&
-        fdopt->data.stream->type == UV_NAMED_PIPE &&
-        ((uv_pipe_t*) fdopt->data.stream)->ipc) {
-      ((uv_pipe_t*) fdopt->data.stream)->pipe.conn.ipc_remote_pid =
-          info.dwProcessId;
-    }
+    fdopt = &options->stdio[i];
+    if (!UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(fdopt))
+      continue;
+
+    pipe = (uv_pipe_t*) fdopt->data.stream;
+    pipe->pipe.conn.ipc_remote_pid = info.dwProcessId;
   }
 
   /* Setup notifications for when the child process exits. */
@@ -1147,7 +1151,7 @@ int uv_spawn(uv_loop_t* loop,
  done:
   err = uv_translate_sys_error(err);
 
- done_uv:
+done_uv:
   uv__free(application);
   uv__free(application_path);
   uv__free(arguments);

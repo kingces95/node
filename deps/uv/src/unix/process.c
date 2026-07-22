@@ -186,38 +186,38 @@ void uv__wait_children(uv_loop_t* loop) {
  * doesn't even need to be defined for them.
  */
 static int uv__process_init_stdio(uv_stdio_container_t* container, int fds[2]) {
-  int mask;
   int fd;
   int ret;
   int size;
   int i;
+  uv_stdio_flags mode;
 
-  mask = UV_IGNORE | UV_CREATE_PIPE | UV_INHERIT_FD | UV_INHERIT_STREAM;
   size = 64 * 1024;
+  mode = UV_STDIO_CONTAINER_GET_MODE(container);
 
-  switch (container->flags & mask) {
+  switch (mode) {
   case UV_IGNORE:
     return 0;
 
   case UV_CREATE_PIPE:
-    assert(container->data.stream != NULL);
-    if (container->data.stream->type != UV_NAMED_PIPE)
+    assert(UV_STDIO_CONTAINER_IS_WELL_FORMED(container));
+    if (!UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(container) &&
+        !UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container))
       return UV_EINVAL;
-    else {
-      ret = uv_socketpair(SOCK_STREAM, 0, fds, 0, 0);
 
-      if (ret == 0)
-        for (i = 0; i < 2; i++) {
-          setsockopt(fds[i], SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
-          setsockopt(fds[i], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
-        }
-    }
+    ret = uv_socketpair(SOCK_STREAM, 0, fds, 0, 0);
+
+    if (ret == 0)
+      for (i = 0; i < 2; i++) {
+        setsockopt(fds[i], SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+        setsockopt(fds[i], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
+      }
 
     return ret;
 
   case UV_INHERIT_FD:
   case UV_INHERIT_STREAM:
-    if (container->flags & UV_INHERIT_FD)
+    if (mode == UV_INHERIT_FD)
       fd = container->data.fd;
     else
       fd = uv__stream_fd(container->data.stream);
@@ -229,7 +229,7 @@ static int uv__process_init_stdio(uv_stdio_container_t* container, int fds[2]) {
     return 0;
 
   default:
-    assert(0 && "Unexpected flags");
+    assert(0 && "Unexpected stdio mode");
     return UV_EINVAL;
   }
 }
@@ -240,7 +240,8 @@ static int uv__process_open_stream(uv_stdio_container_t* container,
   int flags;
   int err;
 
-  if (!(container->flags & UV_CREATE_PIPE) || pipefds[0] < 0)
+  if (UV_STDIO_CONTAINER_GET_MODE(container) != UV_CREATE_PIPE ||
+      pipefds[0] < 0)
     return 0;
 
   err = uv__close(pipefds[1]);
@@ -261,7 +262,8 @@ static int uv__process_open_stream(uv_stdio_container_t* container,
 
 
 static void uv__process_close_stream(uv_stdio_container_t* container) {
-  if (!(container->flags & UV_CREATE_PIPE)) return;
+  if (UV_STDIO_CONTAINER_GET_MODE(container) != UV_CREATE_PIPE)
+    return;
   uv__stream_close(container->data.stream);
 }
 
@@ -1076,9 +1078,11 @@ error:
   uv__queue_remove(&process->handle_queue);
   if (pipes != NULL) {
     for (i = 0; i < stdio_count; i++) {
-      if (i < options->stdio_count)
-        if (options->stdio[i].flags & (UV_INHERIT_FD | UV_INHERIT_STREAM))
+      if (i < options->stdio_count) {
+        uv_stdio_flags mode = UV_STDIO_CONTAINER_GET_MODE(&options->stdio[i]);
+        if (mode == UV_INHERIT_FD || mode == UV_INHERIT_STREAM)
           continue;
+      }
       if (pipes[i][0] != -1)
         uv__close_nocheckstdio(pipes[i][0]);
       if (pipes[i][1] != -1)

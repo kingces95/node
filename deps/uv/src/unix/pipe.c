@@ -46,11 +46,22 @@ static int includes_invalid_nul(const char *s, size_t n) {
 
 
 int uv_pipe_init(uv_loop_t* loop, uv_pipe_t* handle, int ipc) {
+  return uv_pipe_init2(loop, handle, ipc ? UV_PIPE_IPC : UV_PIPE_STANDARD);
+}
+
+
+int uv_pipe_init2(uv_loop_t* loop,
+                  uv_pipe_t* handle,
+                  uv_pipe_type_t type) {
+  if (type != UV_PIPE_STANDARD &&
+      type != UV_PIPE_IPC)
+    return UV_EINVAL;
+
   uv__stream_init(loop, (uv_stream_t*)handle, UV_NAMED_PIPE);
   handle->shutdown_req = NULL;
   handle->connect_req = NULL;
   handle->pipe_fname = NULL;
-  handle->ipc = ipc;
+  handle->ipc = type == UV_PIPE_IPC;
   return 0;
 }
 
@@ -154,7 +165,7 @@ int uv__pipe_listen(uv_pipe_t* handle, int backlog, uv_connection_cb cb) {
   if (uv__stream_fd(handle) == -1)
     return UV_EINVAL;
 
-  if (handle->ipc)
+  if (UV_PIPE_TYPE_IS_IPC(handle))
     return UV_EINVAL;
 
 #if defined(__MVS__) || defined(__PASE__)
@@ -420,7 +431,7 @@ void uv_pipe_pending_instances(uv_pipe_t* handle, int count) {
 int uv_pipe_pending_count(uv_pipe_t* handle) {
   uv__stream_queued_fds_t* queued_fds;
 
-  if (!handle->ipc)
+  if (!UV_PIPE_TYPE_IS_IPC(handle))
     return 0;
 
   if (handle->accepted_fd == -1)
@@ -435,7 +446,7 @@ int uv_pipe_pending_count(uv_pipe_t* handle) {
 
 
 uv_handle_type uv_pipe_pending_type(uv_pipe_t* handle) {
-  if (!handle->ipc)
+  if (!UV_PIPE_TYPE_IS_IPC(handle))
     return UV_UNKNOWN_HANDLE;
 
   if (handle->accepted_fd == -1)

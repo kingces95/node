@@ -112,6 +112,17 @@ static void uv__unique_pipe_name(unsigned long long ptr, char* name, size_t size
 
 
 int uv_pipe_init(uv_loop_t* loop, uv_pipe_t* handle, int ipc) {
+  return uv_pipe_init2(loop, handle, ipc ? UV_PIPE_IPC : UV_PIPE_STANDARD);
+}
+
+
+int uv_pipe_init2(uv_loop_t* loop,
+                  uv_pipe_t* handle,
+                  uv_pipe_type_t type) {
+  if (type != UV_PIPE_STANDARD &&
+      type != UV_PIPE_IPC)
+    return UV_EINVAL;
+
   uv__stream_init(loop, (uv_stream_t*)handle, UV_NAMED_PIPE);
 
   handle->reqs_pending = 0;
@@ -121,7 +132,7 @@ int uv_pipe_init(uv_loop_t* loop, uv_pipe_t* handle, int ipc) {
   handle->pipe.conn.ipc_data_frame.payload_remaining = 0;
   uv__queue_init(&handle->pipe.conn.ipc_xfer_queue);
   handle->pipe.conn.ipc_xfer_queue_length = 0;
-  handle->ipc = ipc;
+  handle->ipc = type == UV_PIPE_IPC;
   handle->pipe.conn.non_overlapped_writes_tail = NULL;
 
   return 0;
@@ -421,7 +432,8 @@ int uv__create_stdio_pipe_pair(uv_loop_t* loop,
     client_flags |= UV_WRITABLE_PIPE;
   }
   server_flags |= UV_NONBLOCK_PIPE;
-  if (flags & UV_NONBLOCK_PIPE || parent_pipe->ipc) {
+  if (flags & UV_NONBLOCK_PIPE ||
+      UV_PIPE_TYPE_IS_IPC(parent_pipe)) {
     client_flags |= UV_NONBLOCK_PIPE;
   }
 
@@ -2466,7 +2478,7 @@ int uv_pipe_open(uv_pipe_t* pipe, uv_file file) {
   if (nt_status != STATUS_SUCCESS)
     return UV_EINVAL;
 
-  if (pipe->ipc) {
+  if (UV_PIPE_TYPE_IS_IPC(pipe)) {
     if (!(access.AccessFlags & FILE_WRITE_DATA) ||
         !(access.AccessFlags & FILE_READ_DATA)) {
       return UV_EINVAL;
@@ -2489,7 +2501,7 @@ int uv_pipe_open(uv_pipe_t* pipe, uv_file file) {
     return err;
   }
 
-  if (pipe->ipc) {
+  if (UV_PIPE_TYPE_IS_IPC(pipe)) {
     assert(!(pipe->flags & UV_HANDLE_NON_OVERLAPPED_PIPE));
     GetNamedPipeClientProcessId(os_handle, &pipe->pipe.conn.ipc_remote_pid);
     if (pipe->pipe.conn.ipc_remote_pid == GetCurrentProcessId()) {

@@ -17,6 +17,21 @@ Data types
 
     Pipe handle type.
 
+.. c:enum:: uv_pipe_type_t
+
+    Pipe behavior selected by :c:func:`uv_pipe_init2`.
+
+    .. versionadded:: 1.53.0
+
+    .. c:enumerator:: UV_PIPE_STANDARD
+
+        A standard byte-stream pipe.
+
+    .. c:enumerator:: UV_PIPE_IPC
+
+        A pipe that supports handle passing between processes. This may change
+        the bytes on the wire.
+
 
 Public members
 ^^^^^^^^^^^^^^
@@ -40,6 +55,33 @@ API
     change the bytes on the wire). Only a connected pipe that will be
     passing the handles should have this flag set, not the listening pipe
     that uv_accept is called on.
+
+    Passing zero is equivalent to
+    ``uv_pipe_init2(loop, handle, UV_PIPE_STANDARD)``. Passing a non-zero value
+    is equivalent to ``uv_pipe_init2(loop, handle, UV_PIPE_IPC)``.
+
+.. c:function:: int uv_pipe_init2(uv_loop_t* loop, uv_pipe_t* handle, uv_pipe_type_t type)
+
+    Initialize a pipe handle with the specified :c:type:`uv_pipe_type_t`.
+    Returns ``UV_EINVAL`` if `type` is not a supported pipe type.
+    In that case, `handle` is not initialized.
+
+    .. versionadded:: 1.53.0
+
+.. c:macro:: UV_PIPE_GET_TYPE(pipe)
+
+    Return the :c:type:`uv_pipe_type_t` of an initialized `pipe`.
+
+    .. versionadded:: 1.53.0
+
+.. c:macro:: UV_PIPE_TYPE_IS_STANDARD(pipe)
+.. c:macro:: UV_PIPE_TYPE_IS_IPC(pipe)
+
+    Return non-zero when `pipe` has the corresponding pipe type.
+    `pipe` must have been initialized by :c:func:`uv_pipe_init` or
+    :c:func:`uv_pipe_init2`.
+
+    .. versionadded:: 1.53.0
 
 .. c:function:: int uv_pipe_open(uv_pipe_t* handle, uv_file file)
 

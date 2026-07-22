@@ -226,6 +226,7 @@ test_run_tests_SOURCES = test/blackhole-server.c \
                          test/test-pipe-connect-multiple.c \
                          test/test-pipe-connect-prepare.c \
                          test/test-pipe-getsockname.c \
+                         test/test-pipe-init2.c \
                          test/test-pipe-pending-instances.c \
                          test/test-pipe-sendmsg.c \
                          test/test-pipe-server-close.c \
@@ -258,6 +259,7 @@ test_run_tests_SOURCES = test/blackhole-server.c \
                          test/test-signal.c \
                          test/test-socket-buffer-size.c \
                          test/test-spawn.c \
+                         test/test-stdio-container-type.c \
                          test/test-stdio-over-pipes.c \
                          test/test-strscpy.c \
                          test/test-strtok.c \

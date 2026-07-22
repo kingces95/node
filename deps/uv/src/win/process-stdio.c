@@ -178,7 +178,9 @@ int uv__stdio_create(uv_loop_t* loop,
   if (count < 0 || count > 255) {
     /* Only support FDs 0-255 */
     return ERROR_NOT_SUPPORTED;
-  } else if (count < 3) {
+  }
+
+  if (count < 3) {
     /* There should always be at least 3 stdio handles. */
     count = 3;
   }
@@ -205,8 +207,7 @@ int uv__stdio_create(uv_loop_t* loop,
       fdopt.flags = UV_IGNORE;
     }
 
-    switch (fdopt.flags & (UV_IGNORE | UV_CREATE_PIPE | UV_INHERIT_FD |
-            UV_INHERIT_STREAM)) {
+    switch (UV_STDIO_CONTAINER_GET_MODE(&fdopt)) {
       case UV_IGNORE:
         /* Starting a process with no stdin/stout/stderr can confuse it. So no
          * matter what the user specified, we make sure the first three FDs are
@@ -237,7 +238,8 @@ int uv__stdio_create(uv_loop_t* loop,
 
         /* Create a new, connected pipe pair. stdio[i]. stream should point to
          * an uninitialized, but not connected pipe handle. */
-        assert(fdopt.data.stream->type == UV_NAMED_PIPE);
+        assert(UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(&fdopt) ||
+               UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(&fdopt));
         assert(!(fdopt.data.stream->flags & UV_HANDLE_CONNECTION));
         assert(!(fdopt.data.stream->flags & UV_HANDLE_PIPESERVER));
 
@@ -310,7 +312,7 @@ int uv__stdio_create(uv_loop_t* loop,
         uv_stream_t* stream = fdopt.data.stream;
 
         /* Leech the handle out of the stream. */
-        if (stream->type == UV_TTY) {
+        if (UV_STDIO_CONTAINER_TYPE_IS_STREAM_TTY(&fdopt)) {
           stream_handle = ((uv_tty_t*) stream)->handle;
           crt_flags = FOPEN | FDEV;
         } else if (stream->type == UV_NAMED_PIPE &&
