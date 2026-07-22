@@ -54,8 +54,9 @@ int ipc_send_recv_helper(void);
 int ipc_helper_bind_twice(void);
 int ipc_helper_send_zero(void);
 int stdio_over_pipes_helper(void);
-void spawn_stdin_stdout(void);
 void process_title_big_argv(void);
+void spawn_read_one_byte(int fd);
+void spawn_stdin_stdout(void);
 int spawn_tcp_server_helper(void);
 
 static int maybe_run_test(int argc, char **argv);
@@ -245,6 +246,18 @@ static int maybe_run_test(int argc, char **argv) {
   if (strcmp(argv[1], "spawn_helper9") == 0) {
     notify_parent_process();
     spawn_stdin_stdout();
+    return 1;
+  }
+
+  if (strcmp(argv[1], "spawn_helper10") == 0) {
+    notify_parent_process();
+    spawn_read_one_byte(0);
+    return 1;
+  }
+
+  if (strcmp(argv[1], "spawn_helper11") == 0) {
+    notify_parent_process();
+    spawn_read_one_byte(3);
     return 1;
   }
 

@@ -71,11 +71,13 @@ TEST_IMPL(stdio_container_type) {
   uv_tty_t tty;
   uv_pipe_t pipe;
   uv_pipe_t ipc;
+  uv_pipe_t straw;
+  uv_pipe_t reclaimer;
   int tty_fd;
 
   loop = uv_default_loop();
 
-  ASSERT_EQ((UV_CREATE_PIPE | UV_INHERIT_FD | UV_INHERIT_STREAM),
+  ASSERT_EQ((UV_IGNORE | UV_CREATE_PIPE | UV_INHERIT_FD | UV_INHERIT_STREAM),
             UV_STDIO_CONTAINER_MODE_MASK);
 
   /* Ignored stdio has no payload and therefore no stream or pipe. */
@@ -141,10 +143,21 @@ TEST_IMPL(stdio_container_type) {
   ASSERT(UV_STDIO_CONTAINER_IS_WELL_FORMED(&stdio));
   ASSERT(UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(&stdio));
 
+  /* Created straw pipes preserve their straw pipe type. */
+  ASSERT_OK(uv_pipe_init2(loop, &straw, UV_PIPE_STRAW));
+  ASSERT_OK(uv_pipe_init(loop, &reclaimer, 0));
+  stdio.flags = UV_CREATE_PIPE;
+  stdio.data.stream = (uv_stream_t*) &straw;
+  stdio.data_out.straw.stream = (uv_stream_t*) &reclaimer;
+  ASSERT_EQ(UV_CREATE_PIPE, UV_STDIO_CONTAINER_GET_MODE(&stdio));
+  ASSERT(UV_STDIO_CONTAINER_IS_WELL_FORMED(&stdio));
+  ASSERT(UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(&stdio));
 
   uv_close((uv_handle_t*) &tcp, NULL);
   uv_close((uv_handle_t*) &pipe, NULL);
   uv_close((uv_handle_t*) &ipc, NULL);
+  uv_close((uv_handle_t*) &straw, NULL);
+  uv_close((uv_handle_t*) &reclaimer, NULL);
 
   ASSERT_OK(uv_run(loop, UV_RUN_DEFAULT));
 

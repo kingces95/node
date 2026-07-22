@@ -861,7 +861,8 @@ enum {
 
 typedef enum {
   UV_PIPE_STANDARD = 0,
-  UV_PIPE_IPC = 1
+  UV_PIPE_IPC = 1,
+  UV_PIPE_STRAW = 2
 } uv_pipe_type_t;
 
 /*
@@ -874,17 +875,22 @@ struct uv_pipe_s {
   UV_HANDLE_FIELDS
   UV_STREAM_FIELDS
   int ipc; /* non-zero if this pipe is used for passing handles */
+  int straw; /* non-zero if this pipe retains child-side stdio */
   UV_PIPE_PRIVATE_FIELDS
 };
 
 #define UV_PIPE_GET_TYPE(pipe) \
-  ((pipe)->ipc ? UV_PIPE_IPC : UV_PIPE_STANDARD)
+  ((pipe)->ipc ? UV_PIPE_IPC : \
+      ((pipe)->straw ? UV_PIPE_STRAW : UV_PIPE_STANDARD))
 
-#define UV_PIPE_TYPE_IS_PIPE(pipe) \
+#define UV_PIPE_TYPE_IS_STANDARD(pipe) \
   (UV_PIPE_GET_TYPE(pipe) == UV_PIPE_STANDARD)
 
 #define UV_PIPE_TYPE_IS_IPC(pipe) \
   (UV_PIPE_GET_TYPE(pipe) == UV_PIPE_IPC)
+
+#define UV_PIPE_TYPE_IS_STRAW(pipe) \
+  (UV_PIPE_GET_TYPE(pipe) == UV_PIPE_STRAW)
 
 UV_EXTERN int uv_pipe_init(uv_loop_t*, uv_pipe_t* handle, int ipc);
 UV_EXTERN int uv_pipe_init2(uv_loop_t*,
@@ -1070,6 +1076,10 @@ typedef enum {
   UV_OVERLAPPED_PIPE = 0x40 /* old name, for compatibility */
 } uv_stdio_flags;
 
+typedef struct uv_stdio_straw_out_s {
+  uv_stream_t* stream; /* retained child-side endpoint for straw stdio */
+} uv_stdio_straw_out_t;
+
 typedef struct uv_stdio_container_s {
   uv_stdio_flags flags;
 
@@ -1077,6 +1087,10 @@ typedef struct uv_stdio_container_s {
     uv_stream_t* stream;
     int fd;
   } data;
+
+  union {
+    uv_stdio_straw_out_t straw;
+  } data_out;
 } uv_stdio_container_t;
 
 /*
@@ -1084,7 +1098,7 @@ typedef struct uv_stdio_container_s {
  * records how the child stdio slot is supplied.
  */
 #define UV_STDIO_CONTAINER_MODE_MASK \
-  (UV_CREATE_PIPE | UV_INHERIT_FD | UV_INHERIT_STREAM)
+  (UV_IGNORE | UV_CREATE_PIPE | UV_INHERIT_FD | UV_INHERIT_STREAM)
 
 #define UV_STDIO_CONTAINER_GET_MODE(container) \
   ((uv_stdio_flags) ((container)->flags & UV_STDIO_CONTAINER_MODE_MASK))
@@ -1102,19 +1116,20 @@ typedef struct uv_stdio_container_s {
  *   UV_STDIO_CONTAINER_STREAM_TTY         // tty
  *   UV_STDIO_CONTAINER_STREAM_PIPE        // pipe
  *   UV_STDIO_CONTAINER_STREAM_PIPE_IPC    // ipc
+ *   UV_STDIO_CONTAINER_STREAM_PIPE_STRAW  // straw
  *
  * Instead of introducing an enum, macros to test for each type are provided:
  *
- *   UV_STDIO_CONTAINER_IS_WELL_FORMED(container)
  *   UV_STDIO_CONTAINER_TYPE_IS_NONE(container)
  *   UV_STDIO_CONTAINER_TYPE_IS_FD(container)
  *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_TCP(container)
  *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_TTY(container)
  *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(container)
  *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container)
+ *   UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(container)
  *
- * Here are examples of activating each type pivoted by mode. The examples are
- * provided as the stdio option to Node.js child_process.spawn().
+ * Here are examples of activating each type pivoted by mode, provided as the
+ * stdio option to Node.js child_process.spawn().
  *
  *   UV_IGNORE
  *     -> none             # No caller-provided payload; for example,
@@ -1129,6 +1144,9 @@ typedef struct uv_stdio_container_s {
  *                         # stdio: ['pipe', 'pipe', 'pipe'].
  *     -> ipc              # Created pipe with IPC framing enabled; for example,
  *                         # child_process.fork() passes 'ipc' in stdio.
+ *     -> straw            # Created pipe whose unconsumed child-input bytes can
+ *                         # be reclaimed after child exit; for example,
+ *                         # stdio: ['straw', 'pipe', 'pipe'].
  *
  *   UV_INHERIT_STREAM
  *     -> tcp              # Existing TCP stream handle is inherited; for
@@ -1137,15 +1155,9 @@ typedef struct uv_stdio_container_s {
  *                         # example, stdio: 'inherit' with process.stdin.
  *     -> pipe             # Existing connected pipe endpoint is inherited; for
  *                         # example, wiring one child.stdout to another
- *                         # child's stdin. IPC pipes cannot be passed here.
+ *                         # child's stdin. IPC/straw pipes cannot be passed
+ *                         # here.
  */
-#define UV_STDIO_CONTAINER_IS_WELL_FORMED(container) \
-  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_IGNORE || \
-   UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_FD || \
-   ((UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_STREAM || \
-     UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE) && \
-    (container)->data.stream != NULL))
-
 #define UV_STDIO_CONTAINER_TYPE_IS_NONE(container) \
   (UV_STDIO_CONTAINER_GET_MODE(container) == UV_IGNORE)
 
@@ -1164,12 +1176,27 @@ typedef struct uv_stdio_container_s {
   ((UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_STREAM || \
     UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE) && \
    (container)->data.stream->type == UV_NAMED_PIPE && \
-   UV_PIPE_TYPE_IS_PIPE((uv_pipe_t*) (container)->data.stream))
+   UV_PIPE_TYPE_IS_STANDARD((uv_pipe_t*) (container)->data.stream))
 
 #define UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container) \
   (UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE && \
    (container)->data.stream->type == UV_NAMED_PIPE && \
    UV_PIPE_TYPE_IS_IPC((uv_pipe_t*) (container)->data.stream))
+
+#define UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE && \
+   (container)->data.stream->type == UV_NAMED_PIPE && \
+   UV_PIPE_TYPE_IS_STRAW((uv_pipe_t*) (container)->data.stream))
+
+/* Tests if a container carries the payload required by its mode. */
+#define UV_STDIO_CONTAINER_IS_WELL_FORMED(container) \
+  (UV_STDIO_CONTAINER_GET_MODE(container) == UV_IGNORE || \
+   UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_FD || \
+   ((UV_STDIO_CONTAINER_GET_MODE(container) == UV_INHERIT_STREAM || \
+     UV_STDIO_CONTAINER_GET_MODE(container) == UV_CREATE_PIPE) && \
+    (container)->data.stream != NULL && \
+    (!UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(container) || \
+     (container)->data_out.straw.stream != NULL)))
 
 typedef struct uv_process_options_s {
   uv_exit_cb exit_cb; /* Called after the process exits. */

@@ -121,6 +121,9 @@ void uv__udp_endgame(uv_loop_t* loop, uv_udp_t* handle);
 int uv__create_stdio_pipe_pair(uv_loop_t* loop,
     uv_pipe_t* parent_pipe, HANDLE* child_pipe_ptr, unsigned int flags);
 
+HANDLE uv__stdio_take_handle(BYTE* buffer, int fd);
+void uv__stdio_put_handle(BYTE* buffer, int fd, HANDLE handle);
+
 int uv__pipe_listen(uv_pipe_t* handle, int backlog, uv_connection_cb cb);
 int uv__pipe_accept(uv_pipe_t* server, uv_stream_t* client);
 int uv__pipe_read_start(uv_pipe_t* handle, uv_alloc_cb alloc_cb,

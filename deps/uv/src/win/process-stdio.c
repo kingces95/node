@@ -95,7 +95,10 @@ void uv_disable_stdio_inheritance(void) {
 }
 
 
-static int uv__duplicate_handle(uv_loop_t* loop, HANDLE handle, HANDLE* dup) {
+static int uv__duplicate_handle(uv_loop_t* loop,
+                                HANDLE handle,
+                                HANDLE* dup,
+                                BOOL inherit) {
   HANDLE current_process;
 
 
@@ -118,13 +121,27 @@ static int uv__duplicate_handle(uv_loop_t* loop, HANDLE handle, HANDLE* dup) {
                        current_process,
                        dup,
                        0,
-                       TRUE,
+                       inherit,
                        DUPLICATE_SAME_ACCESS)) {
     *dup = INVALID_HANDLE_VALUE;
     return GetLastError();
   }
 
   return 0;
+}
+
+
+static int uv__duplicate_inheritable_handle(uv_loop_t* loop,
+                                            HANDLE handle,
+                                            HANDLE* dup) {
+  return uv__duplicate_handle(loop, handle, dup, TRUE);
+}
+
+
+static int uv__duplicate_noninheritable_handle(uv_loop_t* loop,
+                                               HANDLE handle,
+                                               HANDLE* dup) {
+  return uv__duplicate_handle(loop, handle, dup, FALSE);
 }
 
 
@@ -137,7 +154,7 @@ static int uv__duplicate_fd(uv_loop_t* loop, int fd, HANDLE* dup) {
   }
 
   handle = uv__get_osfhandle(fd);
-  return uv__duplicate_handle(loop, handle, dup);
+  return uv__duplicate_inheritable_handle(loop, handle, dup);
 }
 
 
@@ -224,7 +241,7 @@ int uv__stdio_create(uv_loop_t* loop,
           if (err)
             goto error;
 
-		  memcpy(CHILD_STDIO_HANDLE(buffer, i), &nul, sizeof(HANDLE));
+          memcpy(CHILD_STDIO_HANDLE(buffer, i), &nul, sizeof(HANDLE));
           CHILD_STDIO_CRT_FLAGS(buffer, i) = FOPEN | FDEV;
         }
         break;
@@ -235,11 +252,13 @@ int uv__stdio_create(uv_loop_t* loop,
          * child. */
         uv_pipe_t* parent_pipe = (uv_pipe_t*) fdopt.data.stream;
         HANDLE child_pipe = INVALID_HANDLE_VALUE;
+        HANDLE straw_pipe = INVALID_HANDLE_VALUE;
 
         /* Create a new, connected pipe pair. stdio[i]. stream should point to
          * an uninitialized, but not connected pipe handle. */
         assert(UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(&fdopt) ||
-               UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(&fdopt));
+               UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(&fdopt) ||
+               UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(&fdopt));
         assert(!(fdopt.data.stream->flags & UV_HANDLE_CONNECTION));
         assert(!(fdopt.data.stream->flags & UV_HANDLE_PIPESERVER));
 
@@ -250,8 +269,36 @@ int uv__stdio_create(uv_loop_t* loop,
         if (err)
           goto error;
 
-		memcpy(CHILD_STDIO_HANDLE(buffer, i), &child_pipe, sizeof(HANDLE));
+        memcpy(CHILD_STDIO_HANDLE(buffer, i), &child_pipe, sizeof(HANDLE));
         CHILD_STDIO_CRT_FLAGS(buffer, i) = FOPEN | FPIPE;
+
+        if (UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(&fdopt)) {
+          uv_file reclaim_fd;
+
+          err = uv__duplicate_noninheritable_handle(loop,
+                                                    child_pipe,
+                                                    &straw_pipe);
+          if (err)
+            goto error;
+
+          reclaim_fd = uv_open_osfhandle((uv_os_fd_t) straw_pipe);
+          if (reclaim_fd == -1) {
+            CloseHandle(straw_pipe);
+            err = ERROR_TOO_MANY_OPEN_FILES;
+            goto error;
+          }
+
+          assert(UV_PIPE_TYPE_IS_STANDARD(
+              (uv_pipe_t*) options->stdio[i].data_out.straw.stream));
+          err = uv_pipe_open((uv_pipe_t*) options->stdio[i].data_out
+                                                       .straw.stream,
+                             reclaim_fd);
+          if (err) {
+            _close(reclaim_fd);
+            goto error;
+          }
+        }
+
         break;
       }
 
@@ -301,7 +348,7 @@ int uv__stdio_create(uv_loop_t* loop,
             return -1;
         }
 
-		memcpy(CHILD_STDIO_HANDLE(buffer, i), &child_handle, sizeof(HANDLE));
+        memcpy(CHILD_STDIO_HANDLE(buffer, i), &child_handle, sizeof(HANDLE));
         break;
       }
 
@@ -333,11 +380,11 @@ int uv__stdio_create(uv_loop_t* loop,
         }
 
         /* Make an inheritable copy of the handle. */
-        err = uv__duplicate_handle(loop, stream_handle, &child_handle);
+        err = uv__duplicate_inheritable_handle(loop, stream_handle, &child_handle);
         if (err)
           goto error;
 
-		memcpy(CHILD_STDIO_HANDLE(buffer, i), &child_handle, sizeof(HANDLE));
+        memcpy(CHILD_STDIO_HANDLE(buffer, i), &child_handle, sizeof(HANDLE));
         CHILD_STDIO_CRT_FLAGS(buffer, i) = crt_flags;
         break;
       }

@@ -187,6 +187,7 @@ void uv__wait_children(uv_loop_t* loop) {
  */
 static int uv__process_init_stdio(uv_stdio_container_t* container, int fds[2]) {
   int fd;
+  int reclaim_fd;
   int ret;
   int size;
   int i;
@@ -202,16 +203,43 @@ static int uv__process_init_stdio(uv_stdio_container_t* container, int fds[2]) {
   case UV_CREATE_PIPE:
     assert(UV_STDIO_CONTAINER_IS_WELL_FORMED(container));
     if (!UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(container) &&
-        !UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container))
+        !UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container) &&
+        !UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(container))
       return UV_EINVAL;
 
     ret = uv_socketpair(SOCK_STREAM, 0, fds, 0, 0);
 
-    if (ret == 0)
+    if (ret == 0) {
       for (i = 0; i < 2; i++) {
         setsockopt(fds[i], SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
         setsockopt(fds[i], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size));
       }
+
+      if (UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(container)) {
+#ifdef F_DUPFD_CLOEXEC /* POSIX 2008 */
+        reclaim_fd = fcntl(fds[1], F_DUPFD_CLOEXEC, 0);
+#else
+        reclaim_fd = fcntl(fds[1], F_DUPFD, 0);
+#endif
+        if (reclaim_fd == -1)
+          return UV__ERR(errno);
+#ifndef F_DUPFD_CLOEXEC /* POSIX 2008 */
+        ret = uv__cloexec(reclaim_fd, 1);
+        if (ret != 0) {
+          uv__close_nocheckstdio(reclaim_fd);
+          return ret;
+        }
+#endif
+        assert(UV_PIPE_TYPE_IS_STANDARD(
+            (uv_pipe_t*) container->data_out.straw.stream));
+        ret = uv_pipe_open((uv_pipe_t*) container->data_out.straw.stream,
+                           reclaim_fd);
+        if (ret != 0) {
+          uv__close_nocheckstdio(reclaim_fd);
+          return ret;
+        }
+      }
+    }
 
     return ret;
 

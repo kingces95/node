@@ -29,9 +29,11 @@
 #include <string.h>
 
 #ifdef _WIN32
+# include <io.h>
 # include <shellapi.h>
 # include <wchar.h>
   typedef BOOL (WINAPI *sCompareObjectHandles)(_In_ HANDLE, _In_ HANDLE);
+# define read _read
 # define unlink _unlink
 # define putenv _putenv
 # define close _close
@@ -170,6 +172,89 @@ static void init_process_options(char* test, uv_exit_cb exit_cb) {
   options.args = args;
   options.exit_cb = exit_cb;
   options.flags = 0;
+}
+
+
+static void spawn_straw_read_one_byte(char* helper, unsigned int slot) {
+  int r;
+  unsigned int i;
+  uv_pipe_t pipe;
+  uv_pipe_t reclaimer;
+  uv_write_t write_req;
+  uv_buf_t buf;
+  uv_stdio_container_t stdio[4];
+  char buffer[] = "abc";
+
+  ASSERT_LT(slot, ARRAY_SIZE(stdio));
+
+  init_process_options(helper, exit_cb);
+
+  r = uv_pipe_init2(uv_default_loop(), &pipe, UV_PIPE_STRAW);
+  ASSERT_OK(r);
+  r = uv_pipe_init(uv_default_loop(), &reclaimer, 0);
+  ASSERT_OK(r);
+  options.stdio = stdio;
+  options.stdio_count = slot + 1;
+
+  for (i = 0; i < slot; i++)
+    options.stdio[i].flags = UV_IGNORE;
+
+  options.stdio[slot].flags = UV_CREATE_PIPE | UV_READABLE_PIPE;
+  options.stdio[slot].data.stream = (uv_stream_t*) &pipe;
+  options.stdio[slot].data_out.straw.stream = (uv_stream_t*) &reclaimer;
+
+  r = uv_spawn(uv_default_loop(), &process, &options);
+  ASSERT_OK(r);
+
+  buf.base = buffer;
+  buf.len = sizeof(buffer) - 1;
+  r = uv_write(&write_req, (uv_stream_t*) &pipe, &buf, 1, write_cb);
+  ASSERT_OK(r);
+
+  r = uv_run(uv_default_loop(), UV_RUN_DEFAULT);
+  ASSERT_OK(r);
+
+  ASSERT_EQ(1, exit_cb_called);
+  ASSERT_EQ(2, close_cb_called); /* Once for process once for the pipe. */
+
+  output_used = 0;
+  r = uv_read_start((uv_stream_t*) &reclaimer, on_alloc, on_read);
+  ASSERT_OK(r);
+  r = uv_run(uv_default_loop(), UV_RUN_DEFAULT);
+  ASSERT_OK(r);
+  ASSERT_EQ(3, close_cb_called);
+
+  /* The helper reads one byte; the straw pipe keeps the unconsumed suffix. */
+  ASSERT_EQ(2, output_used);
+  ASSERT_MEM_EQ("bc", output, output_used);
+}
+
+
+static int count_open_handles(void) {
+#ifdef _WIN32
+  DWORD count;
+
+  ASSERT(GetProcessHandleCount(GetCurrentProcess(), &count));
+  return (int) count;
+#else
+  int count;
+  int r;
+  uv_dirent_t dent;
+  uv_fs_t fs_req;
+
+  r = uv_fs_scandir(NULL, &fs_req, "/proc/self/fd", 0, NULL);
+  if (r < 0) {
+    uv_fs_req_cleanup(&fs_req);
+    return r;
+  }
+
+  count = 0;
+  while (uv_fs_scandir_next(&fs_req, &dent) != UV_EOF)
+    count++;
+
+  uv_fs_req_cleanup(&fs_req);
+  return count;
+#endif
 }
 
 
@@ -617,6 +702,74 @@ TEST_IMPL(spawn_stdin) {
   ASSERT_EQ(1, exit_cb_called);
   ASSERT_EQ(3, close_cb_called); /* Once for process twice for the pipe. */
   ASSERT_OK(strcmp(buffer, output));
+
+  MAKE_VALGRIND_HAPPY(uv_default_loop());
+  return 0;
+}
+
+
+TEST_IMPL(spawn_stdin_straw) {
+  spawn_straw_read_one_byte("spawn_helper10", 0);
+
+  MAKE_VALGRIND_HAPPY(uv_default_loop());
+  return 0;
+}
+
+
+TEST_IMPL(spawn_stdio_straw_greater_than_3) {
+  spawn_straw_read_one_byte("spawn_helper11", 3);
+
+  MAKE_VALGRIND_HAPPY(uv_default_loop());
+  return 0;
+}
+
+
+TEST_IMPL(spawn_stdin_straw_open_fails) {
+  int after;
+  int before;
+  int i;
+  int iterations;
+  int r;
+  uv_pipe_t in;
+  uv_pipe_t reclaimer;
+  uv_stdio_container_t stdio[1];
+
+  iterations = 100;
+
+  before = count_open_handles();
+#ifndef _WIN32
+  if (before == UV_ENOENT)
+    RETURN_SKIP("Cannot count open fds without /proc/self/fd");
+#endif
+  ASSERT_GT(before, 0);
+
+  for (i = 0; i < iterations; i++) {
+    ASSERT_OK(uv_pipe_init2(uv_default_loop(), &in, UV_PIPE_STRAW));
+    ASSERT_OK(uv_pipe_init(uv_default_loop(), &reclaimer, 0));
+    exepath_size = sizeof(exepath);
+    init_process_options("", fail_cb);
+    options.file = options.args[0] = "program-that-had-better-not-exist";
+
+    options.stdio = stdio;
+    options.stdio[0].flags = UV_CREATE_PIPE | UV_READABLE_PIPE;
+    options.stdio[0].data.stream = (uv_stream_t*) &in;
+    options.stdio[0].data_out.straw.stream = (uv_stream_t*) &reclaimer;
+    options.stdio_count = 1;
+
+    /* Program lookup fails after stdio creation claims the straw fd. */
+    r = uv_spawn(uv_default_loop(), &process, &options);
+    ASSERT(r == UV_ENOENT || r == UV_EACCES);
+    ASSERT_OK(uv_is_active((uv_handle_t*) &process));
+
+    uv_close((uv_handle_t*) &in, close_cb);
+    uv_close((uv_handle_t*) &reclaimer, close_cb);
+    uv_close((uv_handle_t*) &process, NULL);
+    ASSERT_OK(uv_run(uv_default_loop(), UV_RUN_DEFAULT));
+  }
+  ASSERT_EQ(iterations * 2, close_cb_called);
+
+  after = count_open_handles();
+  ASSERT_LE(after, before + iterations / 2);
 
   MAKE_VALGRIND_HAPPY(uv_default_loop());
   return 0;
@@ -2025,7 +2178,20 @@ TEST_IMPL(spawn_exercise_sigchld_issue) {
   return 0;
 }
 
-/* Helper for child process of spawn_inherit_streams */
+
+/* Helpers for child process tests. */
+void spawn_read_one_byte(int fd) {
+  char buf;
+  int r;
+
+  do
+    r = read(fd, &buf, 1);
+  while (r == -1 && errno == EINTR);
+
+  ASSERT_EQ(1, r);
+}
+
+
 #ifndef _WIN32
 void spawn_stdin_stdout(void) {
   char buf[1024];

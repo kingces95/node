@@ -28,6 +28,7 @@ TEST_IMPL(pipe_init2) {
   uv_loop_t* loop;
   uv_pipe_t standard;
   uv_pipe_t ipc;
+  uv_pipe_t straw;
   uv_pipe_t invalid;
 
   loop = uv_default_loop();
@@ -35,13 +36,17 @@ TEST_IMPL(pipe_init2) {
   /* Standard pipes are plain byte streams with no type behavior. */
   ASSERT_OK(uv_pipe_init2(loop, &standard, UV_PIPE_STANDARD));
   ASSERT_EQ(UV_PIPE_STANDARD, UV_PIPE_GET_TYPE(&standard));
-  ASSERT(UV_PIPE_TYPE_IS_PIPE(&standard));
+  ASSERT(UV_PIPE_TYPE_IS_STANDARD(&standard));
 
   /* IPC pipes preserve the legacy uv_pipe_init(..., ipc=1) behavior. */
   ASSERT_OK(uv_pipe_init2(loop, &ipc, UV_PIPE_IPC));
   ASSERT_EQ(UV_PIPE_IPC, UV_PIPE_GET_TYPE(&ipc));
   ASSERT(UV_PIPE_TYPE_IS_IPC(&ipc));
 
+  /* Straw pipes opt into child-stdio reclamation without IPC framing. */
+  ASSERT_OK(uv_pipe_init2(loop, &straw, UV_PIPE_STRAW));
+  ASSERT_EQ(UV_PIPE_STRAW, UV_PIPE_GET_TYPE(&straw));
+  ASSERT(UV_PIPE_TYPE_IS_STRAW(&straw));
 
   /* uv_pipe_init2() is public API, so invalid types report UV_EINVAL. */
   ASSERT_EQ(UV_EINVAL,
@@ -49,6 +54,7 @@ TEST_IMPL(pipe_init2) {
 
   uv_close((uv_handle_t*) &standard, NULL);
   uv_close((uv_handle_t*) &ipc, NULL);
+  uv_close((uv_handle_t*) &straw, NULL);
 
   ASSERT_OK(uv_run(loop, UV_RUN_DEFAULT));
 
@@ -63,13 +69,14 @@ TEST_IMPL(pipe_type_predicates) {
   uv_pipe_t legacy_ipc;
   uv_pipe_t standard;
   uv_pipe_t ipc;
+  uv_pipe_t straw;
 
   loop = uv_default_loop();
 
   /* Legacy uv_pipe_init(..., ipc=0) creates a standard pipe. */
   ASSERT_OK(uv_pipe_init(loop, &legacy_standard, 0));
   ASSERT_EQ(UV_PIPE_STANDARD, UV_PIPE_GET_TYPE(&legacy_standard));
-  ASSERT(UV_PIPE_TYPE_IS_PIPE(&legacy_standard));
+  ASSERT(UV_PIPE_TYPE_IS_STANDARD(&legacy_standard));
 
   /* Legacy uv_pipe_init(..., ipc=1) creates an IPC pipe. */
   ASSERT_OK(uv_pipe_init(loop, &legacy_ipc, 1));
@@ -79,17 +86,21 @@ TEST_IMPL(pipe_type_predicates) {
   /* uv_pipe_init2() exposes the complete pipe type set. */
   ASSERT_OK(uv_pipe_init2(loop, &standard, UV_PIPE_STANDARD));
   ASSERT_EQ(UV_PIPE_STANDARD, UV_PIPE_GET_TYPE(&standard));
-  ASSERT(UV_PIPE_TYPE_IS_PIPE(&standard));
+  ASSERT(UV_PIPE_TYPE_IS_STANDARD(&standard));
 
   ASSERT_OK(uv_pipe_init2(loop, &ipc, UV_PIPE_IPC));
   ASSERT_EQ(UV_PIPE_IPC, UV_PIPE_GET_TYPE(&ipc));
   ASSERT(UV_PIPE_TYPE_IS_IPC(&ipc));
 
+  ASSERT_OK(uv_pipe_init2(loop, &straw, UV_PIPE_STRAW));
+  ASSERT_EQ(UV_PIPE_STRAW, UV_PIPE_GET_TYPE(&straw));
+  ASSERT(UV_PIPE_TYPE_IS_STRAW(&straw));
 
   uv_close((uv_handle_t*) &legacy_standard, NULL);
   uv_close((uv_handle_t*) &legacy_ipc, NULL);
   uv_close((uv_handle_t*) &standard, NULL);
   uv_close((uv_handle_t*) &ipc, NULL);
+  uv_close((uv_handle_t*) &straw, NULL);
 
   ASSERT_OK(uv_run(loop, UV_RUN_DEFAULT));
 

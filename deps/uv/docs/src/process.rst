@@ -95,9 +95,31 @@ Data types
             UV_PROCESS_WINDOWS_FILE_PATH_EXACT_NAME = (1 << 7)
         };
 
+.. c:type:: uv_stdio_straw_out_t
+
+    Output operand for a straw stdio container. The caller sets `stream` to an
+    initialized but unopened standard :c:type:`uv_pipe_t` before calling
+    :c:func:`uv_spawn`. Stdio setup opens that handle over the retained
+    child-side endpoint.
+
+    ::
+
+        typedef struct uv_stdio_straw_out_s {
+            uv_stream_t* stream;
+        } uv_stdio_straw_out_t;
+
+    .. versionadded:: 1.53.0
+
 .. c:type:: uv_stdio_container_t
 
     Container for each stdio handle or fd passed to a child process.
+
+    `data` contains the input operand that describes what the child receives.
+    `data_out` contains output operands for additional parent-owned resources
+    produced while setting up that stdio slot. The caller initializes the
+    objects referenced by `data_out` before calling :c:func:`uv_spawn`;
+    :c:func:`uv_spawn` populates those objects without replacing the pointers,
+    and the caller retains ownership of them.
 
     ::
 
@@ -107,6 +129,9 @@ Data types
                 uv_stream_t* stream;
                 int fd;
             } data;
+            union {
+                uv_stdio_straw_out_t straw;
+            } data_out;
         } uv_stdio_container_t;
 
 .. c:enum:: uv_stdio_flags
@@ -131,8 +156,10 @@ Data types
             /*
             * Open a new pipe into `data.stream`, per the flags below. The
             * `data.stream` field must point to a uv_pipe_t object that has
-            * been initialized with `uv_pipe_init(loop, data.stream, ipc);`,
-            * but not yet opened or connected.
+            * been initialized with `uv_pipe_init()` or `uv_pipe_init2()`, but
+            * not yet opened or connected. For a UV_PIPE_STRAW,
+            * `data_out.straw.stream` must point to an unopened
+            * UV_PIPE_STANDARD.
             /*
             UV_CREATE_PIPE = 0x01,
 
@@ -196,6 +223,7 @@ Data types
 .. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_TTY(container)
 .. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE(container)
 .. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_IPC(container)
+.. c:macro:: UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(container)
 
     Return non-zero when `container` has the corresponding effective type.
     The effective type is independent of pipe direction and blocking mode:
@@ -204,9 +232,9 @@ Data types
     * ``UV_INHERIT_FD`` has type ``FD``.
     * ``UV_INHERIT_STREAM`` can classify a TCP stream, TTY stream, or standard
       pipe stream.
-    * ``UV_CREATE_PIPE`` can classify a standard or IPC pipe stream.
+    * ``UV_CREATE_PIPE`` can classify a standard, IPC, or straw pipe stream.
 
-    The IPC predicate requires ``UV_CREATE_PIPE`` and returns zero for
+    The IPC and straw predicates require ``UV_CREATE_PIPE`` and return zero for
     ``UV_INHERIT_STREAM``. The standard pipe predicate recognizes both created
     and inherited standard pipes.
 
@@ -281,6 +309,53 @@ Public members
 
     Union containing either the `stream` or `fd` to be passed on to the child
     process.
+
+.. c:member:: union @1 uv_stdio_container_t.data_out
+.. c:member:: uv_stream_t* uv_stdio_straw_out_t.stream
+
+    Straw behavior applies only to ``UV_CREATE_PIPE``. Initialize
+    ``data.stream`` with ``UV_PIPE_STRAW`` and set
+    `data_out.straw.stream` to an initialized but unopened standard
+    :c:type:`uv_pipe_t`. A typical child-input setup is:
+
+    .. code-block:: c
+
+        uv_pipe_t input;
+        uv_pipe_t retained;
+        uv_stdio_container_t stdio;
+
+        uv_pipe_init2(loop, &input, UV_PIPE_STRAW);
+        uv_pipe_init(loop, &retained, 0);
+
+        stdio.flags = UV_CREATE_PIPE | UV_READABLE_PIPE;
+        stdio.data.stream = (uv_stream_t*) &input;
+        stdio.data_out.straw.stream = (uv_stream_t*) &retained;
+
+    ``UV_READABLE_PIPE`` is from the child's perspective: the child reads and
+    the parent writes. ``UV_WRITABLE_PIPE`` may also be specified if the child
+    stdio slot must be duplex. A straw may be used for fd 0 or any other stdio
+    slot from which the child reads.
+
+    During stdio setup, :c:func:`uv_spawn` opens `data.stream` over the
+    parent-side endpoint and opens `data_out.straw.stream` over a duplicate of
+    the child-side endpoint. The duplicate is close-on-exec on Unix and
+    non-inheritable on Windows, so the executed child receives only its
+    original endpoint. The caller owns both pipe handles and is responsible for
+    closing them.
+
+    The child and the retained endpoint consume bytes from the same operating
+    system pipe buffer. Reading the retained endpoint before the child exits
+    can therefore take input intended for the child. After the child exits,
+    the caller can read any unconsumed suffix and place it before input not yet
+    sent to a subsequent consumer, preserving the original byte order.
+
+    Libuv does not automatically read, drain, or close the retained endpoint.
+    If :c:func:`uv_spawn` returns an error, the caller must still close both
+    initialized pipe handles. The retained endpoint may already have been
+    opened if a later stdio slot or executable setup failed. If executable
+    lookup fails after stdio setup, reading it yields end-of-file.
+
+    .. versionadded:: 1.53.0
 
 
 API

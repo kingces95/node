@@ -120,7 +120,8 @@ int uv_pipe_init2(uv_loop_t* loop,
                   uv_pipe_t* handle,
                   uv_pipe_type_t type) {
   if (type != UV_PIPE_STANDARD &&
-      type != UV_PIPE_IPC)
+      type != UV_PIPE_IPC &&
+      type != UV_PIPE_STRAW)
     return UV_EINVAL;
 
   uv__stream_init(loop, (uv_stream_t*)handle, UV_NAMED_PIPE);
@@ -133,6 +134,7 @@ int uv_pipe_init2(uv_loop_t* loop,
   uv__queue_init(&handle->pipe.conn.ipc_xfer_queue);
   handle->pipe.conn.ipc_xfer_queue_length = 0;
   handle->ipc = type == UV_PIPE_IPC;
+  handle->straw = type == UV_PIPE_STRAW;
   handle->pipe.conn.non_overlapped_writes_tail = NULL;
 
   return 0;

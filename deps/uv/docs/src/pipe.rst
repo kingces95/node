@@ -32,6 +32,14 @@ Data types
         A pipe that supports handle passing between processes. This may change
         the bytes on the wire.
 
+    .. c:enumerator:: UV_PIPE_STRAW
+
+        A child-input pipe that retains a duplicate of the child-side endpoint
+        when it is created by :c:func:`uv_spawn`. This allows bytes produced
+        but not consumed by the child to be reclaimed after the child exits.
+        This type has no retention behavior outside ``UV_CREATE_PIPE`` stdio
+        setup.
+
 
 Public members
 ^^^^^^^^^^^^^^
@@ -41,6 +49,11 @@ Public members
     Whether this pipe is suitable for handle passing between processes.
     Only a connected pipe that will be passing the handles should have this flag
     set, not the listening pipe that uv_accept is called on.
+
+.. c:member:: int uv_pipe_t.straw
+
+    Whether this pipe retains the child-side endpoint when used to create
+    child stdio. Use :c:func:`uv_pipe_init2` to initialize a straw pipe.
 
 .. seealso:: The :c:type:`uv_stream_t` members also apply.
 
@@ -76,6 +89,7 @@ API
 
 .. c:macro:: UV_PIPE_TYPE_IS_STANDARD(pipe)
 .. c:macro:: UV_PIPE_TYPE_IS_IPC(pipe)
+.. c:macro:: UV_PIPE_TYPE_IS_STRAW(pipe)
 
     Return non-zero when `pipe` has the corresponding pipe type.
     `pipe` must have been initialized by :c:func:`uv_pipe_init` or
