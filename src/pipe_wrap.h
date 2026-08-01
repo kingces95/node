@@ -37,7 +37,8 @@ class PipeWrap : public ConnectionWrap<PipeWrap, uv_pipe_t> {
   enum SocketType {
     SOCKET,
     SERVER,
-    IPC
+    IPC,
+    STRAW
   };
 
   static v8::MaybeLocal<v8::Object> Instantiate(Environment* env,
@@ -57,7 +58,7 @@ class PipeWrap : public ConnectionWrap<PipeWrap, uv_pipe_t> {
   PipeWrap(Environment* env,
            v8::Local<v8::Object> object,
            ProviderType provider,
-           bool ipc);
+           uv_pipe_type_t type);
 
   static void New(const v8::FunctionCallbackInfo<v8::Value>& args);
   static void Bind(const v8::FunctionCallbackInfo<v8::Value>& args);

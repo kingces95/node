@@ -116,11 +116,11 @@ class ProcessWrap : public HandleWrap {
   }
 
   static Maybe<uv_stream_t*> StreamForWrap(Environment* env,
-                                           Local<Object> stdio) {
-    Local<String> handle_key = env->handle_string();
+                                           Local<Object> stdio,
+                                           Local<String> key) {
     // This property has always been set by JS land if we are in this code path.
     Local<Value> val;
-    if (!stdio->Get(env->context(), handle_key).ToLocal(&val)) {
+    if (!stdio->Get(env->context(), key).ToLocal(&val)) {
       return Nothing<uv_stream_t*>();
     }
     Local<Object> handle = val.As<Object>();
@@ -128,6 +128,11 @@ class ProcessWrap : public HandleWrap {
     uv_stream_t* stream = LibuvStreamWrap::From(env, handle)->stream();
     CHECK_NOT_NULL(stream);
     return Just(stream);
+  }
+
+  static Maybe<uv_stream_t*> StreamForWrap(Environment* env,
+                                           Local<Object> stdio) {
+    return StreamForWrap(env, stdio, env->handle_string());
   }
 
   static Maybe<void> ParseStdioOptions(
@@ -162,6 +167,13 @@ class ProcessWrap : public HandleWrap {
             UV_CREATE_PIPE | UV_READABLE_PIPE | UV_WRITABLE_PIPE);
         if (!StreamForWrap(env, stdio).To(&(*options_stdio)[i].data.stream)) {
           return Nothing<void>();
+        }
+        if (UV_STDIO_CONTAINER_TYPE_IS_STREAM_PIPE_STRAW(
+                &(*options_stdio)[i])) {
+          if (!StreamForWrap(env, stdio, env->reclaimer_string())
+                   .To(&(*options_stdio)[i].data_out.straw.stream)) {
+            return Nothing<void>();
+          }
         }
       } else if (type->StrictEquals(env->overlapped_string())) {
         (*options_stdio)[i].flags =

@@ -99,6 +99,7 @@ void PipeWrap::Initialize(Local<Object> target,
   NODE_DEFINE_CONSTANT(constants, SOCKET);
   NODE_DEFINE_CONSTANT(constants, SERVER);
   NODE_DEFINE_CONSTANT(constants, IPC);
+  NODE_DEFINE_CONSTANT(constants, STRAW);
   NODE_DEFINE_CONSTANT(constants, UV_READABLE);
   NODE_DEFINE_CONSTANT(constants, UV_WRITABLE);
   target->Set(context, env->constants_string(), constants).Check();
@@ -127,34 +128,38 @@ void PipeWrap::New(const FunctionCallbackInfo<Value>& args) {
   int type_value = args[0].As<Int32>()->Value();
   PipeWrap::SocketType type = static_cast<PipeWrap::SocketType>(type_value);
 
-  bool ipc;
+  uv_pipe_type_t pipe_type;
   ProviderType provider;
   switch (type) {
     case SOCKET:
       provider = PROVIDER_PIPEWRAP;
-      ipc = false;
+      pipe_type = UV_PIPE_STANDARD;
       break;
     case SERVER:
       provider = PROVIDER_PIPESERVERWRAP;
-      ipc = false;
+      pipe_type = UV_PIPE_STANDARD;
       break;
     case IPC:
       provider = PROVIDER_PIPEWRAP;
-      ipc = true;
+      pipe_type = UV_PIPE_IPC;
+      break;
+    case STRAW:
+      provider = PROVIDER_PIPEWRAP;
+      pipe_type = UV_PIPE_STRAW;
       break;
     default:
       UNREACHABLE();
   }
 
-  new PipeWrap(env, args.This(), provider, ipc);
+  new PipeWrap(env, args.This(), provider, pipe_type);
 }
 
 PipeWrap::PipeWrap(Environment* env,
                    Local<Object> object,
                    ProviderType provider,
-                   bool ipc)
+                   uv_pipe_type_t type)
     : ConnectionWrap(env, object, provider) {
-  int r = uv_pipe_init(env->event_loop(), &handle_, ipc);
+  int r = uv_pipe_init2(env->event_loop(), &handle_, type);
   CHECK_EQ(r, 0);  // How do we proxy this error up to javascript?
                    // Suggestion: uv_pipe_init() returns void.
 }

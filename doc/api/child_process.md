@@ -1025,13 +1025,44 @@ pipes between the parent and child. The value is one of the following:
    These are not actual Unix pipes and therefore the child process
    can not use them by their descriptor files,
    e.g. `/dev/fd/2` or `/dev/stdout`.
-2. `'overlapped'`: Same as `'pipe'` except that the `FILE_FLAG_OVERLAPPED` flag
+2. `'straw'`: Create a child-input pipe from which the child can "sip" a prefix
+   of the bytes written by the parent. When the child exits, bytes left in the
+   "straw" because they were produced but not consumed can be reclaimed by the
+   parent. This option is supported only by the asynchronous child process
+   methods and only for fd 0 or fds greater than 2. Using it for fd 1 or fd 2
+   throws an error.
+
+   The parent-side writable stream is exposed in the same way as a stream
+   created with `'pipe'`. It has a `reclaimer` property containing a paused
+   {stream.Readable} that shares the child-side input with the child process.
+   The child process and the reclaimer consume bytes from the same operating
+   system pipe buffer. Reading from the reclaimer before the child exits can
+   therefore take input that was intended for the child.
+
+   The [`'exit'`][] event is the last opportunity to start consuming the
+   reclaimer. In a producer-consumer workflow, the event handler can also pause
+   the producer. The caller can then place the reclaimed bytes before input
+   that has not yet been sent and resume production for the next consumer,
+   preserving the original byte order. Node.js does not perform this
+   reintegration automatically.
+
+   If the reclaimer remains paused after the event handlers return, Node.js
+   resumes it on the next tick and discards any unread input so that the
+   [`'close'`][] event can be emitted. The [`'close'`][] event waits for the
+   reclaimer stream to close. After that event, the `reclaimer` property refers
+   to the same stream in its closed state.
+
+   A stream created with `'straw'`, and its reclaimer, cannot be used as stdio
+   for another child process. Destroying the reclaimer before the child exits
+   abandons recovery without closing the child's independently duplicated
+   endpoint.
+3. `'overlapped'`: Same as `'pipe'` except that the `FILE_FLAG_OVERLAPPED` flag
    is set on the handle. This is necessary for overlapped I/O on the child
    process's stdio handles. See the
    [docs](https://docs.microsoft.com/en-us/windows/win32/fileio/synchronous-and-asynchronous-i-o)
    for more details. This is exactly the same as `'pipe'` on non-Windows
    systems.
-3. `'ipc'`: Create an IPC channel for passing messages/file descriptors
+4. `'ipc'`: Create an IPC channel for passing messages/file descriptors
    between parent and child. A [`ChildProcess`][] may have at most one IPC
    stdio file descriptor. Setting this option enables the
    [`subprocess.send()`][] method. If the child process is a Node.js instance,
@@ -1042,15 +1073,15 @@ pipes between the parent and child. The value is one of the following:
    Accessing the IPC channel fd in any way other than [`process.send()`][]
    or using the IPC channel with a child process that is not a Node.js instance
    is not supported.
-4. `'ignore'`: Instructs Node.js to ignore the fd in the child. While Node.js
+5. `'ignore'`: Instructs Node.js to ignore the fd in the child. While Node.js
    will always open fds 0, 1, and 2 for the processes it spawns, setting the fd
    to `'ignore'` will cause Node.js to open `/dev/null` and attach it to the
    child's fd.
-5. `'inherit'`: Pass through the corresponding stdio stream to/from the
+6. `'inherit'`: Pass through the corresponding stdio stream to/from the
    parent process. In the first three positions, this is equivalent to
    `process.stdin`, `process.stdout`, and `process.stderr`, respectively. In
    any other position, equivalent to `'ignore'`.
-6. {Stream} object: Share a readable or writable stream that refers to a tty,
+7. {Stream} object: Share a readable or writable stream that refers to a tty,
    file, socket, or a pipe with the child process. The stream's underlying
    file descriptor is duplicated in the child process to the fd that
    corresponds to the index in the `stdio` array. The stream must have an
@@ -1065,11 +1096,11 @@ pipes between the parent and child. The value is one of the following:
    encounters errors. Always ensure that `stdin` is used as readable and
    `stdout`/`stderr` as writable to maintain the intended flow of data between
    the parent and child processes.
-7. Positive integer: The integer value is interpreted as a file descriptor
+8. Positive integer: The integer value is interpreted as a file descriptor
    that is open in the parent process. It is shared with the child
    process, similar to how {Stream} objects can be shared. Passing sockets
    is not supported on Windows.
-8. `null`, `undefined`: Use default value. For stdio fds 0, 1, and 2 (in other
+9. `null`, `undefined`: Use default value. For stdio fds 0, 1, and 2 (in other
    words, stdin, stdout, and stderr) a pipe is created. For fd 3 and up, the
    default is `'ignore'`.
 
@@ -2155,8 +2186,10 @@ A `Writable Stream` that represents the child process's `stdin`.
 If a child process waits to read all of its input, the child process will not continue
 until this stream has been closed via `end()`.
 
-If the child process was spawned with `stdio[0]` set to anything other than `'pipe'`,
-then this will be `null`.
+If the child process was spawned with `stdio[0]` set to anything other than
+`'pipe'` or `'straw'`, then this will be `null`. When it is set to `'straw'`,
+this stream has a paused {stream.Readable} in its `reclaimer` property. See
+[`stdio`][] for its lifecycle and usage restrictions.
 
 `subprocess.stdin` is an alias for `subprocess.stdio[0]`. Both properties will
 refer to the same value.
@@ -2174,9 +2207,12 @@ added: v0.7.10
 
 A sparse array of pipes to the child process, corresponding with positions in
 the [`stdio`][] option passed to [`child_process.spawn()`][] that have been set
-to the value `'pipe'`. `subprocess.stdio[0]`, `subprocess.stdio[1]`, and
-`subprocess.stdio[2]` are also available as `subprocess.stdin`,
-`subprocess.stdout`, and `subprocess.stderr`, respectively.
+to the value `'pipe'` or `'straw'`. `subprocess.stdio[0]`,
+`subprocess.stdio[1]`, and `subprocess.stdio[2]` are also available as
+`subprocess.stdin`, `subprocess.stdout`, and `subprocess.stderr`, respectively.
+Streams created with `'straw'` have a paused {stream.Readable} in their
+`reclaimer` property. See [`stdio`][] for its lifecycle and usage
+restrictions.
 
 In the following example, only the child's fd `1` (stdout) is configured as a
 pipe, so only the parent's `subprocess.stdio[1]` is a stream, all other values
@@ -2356,6 +2392,7 @@ or [`child_process.fork()`][].
 [HTML structured clone algorithm]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm
 [Shell requirements]: #shell-requirements
 [Signal Events]: process.md#signal-events
+[`'close'`]: #event-close
 [`'disconnect'`]: process.md#event-disconnect
 [`'error'`]: #event-error
 [`'exit'`]: #event-exit

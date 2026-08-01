@@ -3,6 +3,7 @@
 
 const common = require('../common');
 const assert = require('assert');
+const async_hooks = require('async_hooks');
 const getValidStdio = require('internal/child_process').getValidStdio;
 
 const expectedError = { code: 'ERR_INVALID_ARG_VALUE', name: 'TypeError' };
@@ -28,6 +29,59 @@ const stdio2 = ['ipc', 'ipc', 'ipc'];
 assert.throws(() => getValidStdio(stdio2, true),
               { code: 'ERR_IPC_SYNC_FORK', name: 'Error' }
 );
+
+// Sync spawn cannot expose the asynchronous reclaimer stream.
+assert.throws(() => getValidStdio(['straw'], true),
+              expectedError);
+
+// Straw preserves unread child input, so stdout and stderr are invalid slots.
+assert.throws(() => getValidStdio(['pipe', 'straw', 'pipe'], false),
+              expectedError);
+assert.throws(() => getValidStdio(['pipe', 'pipe', 'straw'], false),
+              expectedError);
+
+// If validation fails after an earlier straw was allocated, cleanup must close
+// both that straw's normal pipe handle and its reclaimer handle.
+{
+  const initialized = [];
+  const destroyed = new Set();
+  let tracking = true;
+  const hook = async_hooks.createHook({
+    init(asyncId, type) {
+      if (tracking && type === 'PIPEWRAP') initialized.push(asyncId);
+    },
+    destroy(asyncId) {
+      destroyed.add(asyncId);
+    },
+  }).enable();
+
+  assert.throws(() => getValidStdio(['straw', 'straw', 'ignore'], false),
+                expectedError);
+  tracking = false;
+
+  process.on('beforeExit', common.mustCall(() => {
+    hook.disable();
+    assert.strictEqual(initialized.length, 2);
+    assert.deepStrictEqual(
+      initialized.filter((asyncId) => destroyed.has(asyncId)),
+      initialized,
+    );
+  }));
+}
+
+// Stdin and descriptors above stderr are valid child-input straw slots.
+{
+  const stdin = getValidStdio(['straw'], false).stdio[0];
+  assert.strictEqual(stdin.type, 'pipe');
+  assert.strictEqual(stdin.readable, false);
+  assert.strictEqual(stdin.writable, false);
+}
+{
+  const fd3 = getValidStdio(['pipe', 'pipe', 'pipe', 'straw'], false).stdio[3];
+  assert.strictEqual(fd3.type, 'pipe');
+  assert.strictEqual(fd3.readable, true);
+  assert.strictEqual(fd3.writable, false);
+}
 
 // Should throw if stdio is not a valid input
 {

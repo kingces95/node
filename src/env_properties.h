@@ -320,6 +320,7 @@
   V(readable_string, "readable")                                               \
   V(read_bigints_string, "readBigInts")                                        \
   V(reason_string, "reason")                                                   \
+  V(reclaimer_string, "reclaimer")                                             \
   V(remaining_pages_string, "remainingPages")                                  \
   V(rename_string, "rename")                                                   \
   V(required_module_facade_url_string,                                         \
