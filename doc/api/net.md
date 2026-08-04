@@ -89,7 +89,8 @@ When a `readable` endpoint is passed as child stdin or as another child fd, the
 child borrows a readable handle. When a `writable` endpoint is passed as child
 stdout, stderr, or another child fd, the child borrows a writable handle. The
 child process does not own the stream object and its [`'close'`][] event does
-not wait for the parent-owned endpoint to close.
+not wait for the parent-owned endpoint to close. An endpoint may be passed to
+only one child process at a time.
 
 The current process is responsible for the endpoint streams. Use normal stream
 idioms such as `end()` to finish writing and stream consumption to drain a
