@@ -71,6 +71,80 @@ net.createServer().listen(
   path.join('\\\\?\\pipe', process.cwd(), 'myctl'));
 ```
 
+### `net.createPipe()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Returns: {Object}
+  * `readable` {net.Socket} The readable end of the pipe.
+  * `writable` {net.Socket} The writable end of the pipe.
+
+The `net.createPipe()` method creates an operating system pipe pair. The
+returned `readable` and `writable` streams are owned by the current process and
+may be passed to [`child_process.spawn()`][] using the [`stdio`][] option.
+
+When a `readable` endpoint is passed as child stdin or as another child fd, the
+child borrows a readable handle. When a `writable` endpoint is passed as child
+stdout, stderr, or another child fd, the child borrows a writable handle. The
+child process does not own the stream object and its [`'close'`][] event does
+not wait for the parent-owned endpoint to close.
+
+The current process is responsible for the endpoint streams. Use normal stream
+idioms such as `end()` to finish writing and stream consumption to drain a
+readable endpoint. Use `resume()` when an unread readable endpoint should be
+drained without observing its data, and use `destroy()` when an endpoint is no
+longer needed without being naturally ended or drained.
+
+```cjs
+const { spawn } = require('node:child_process');
+const { createPipe } = require('node:net');
+const { text } = require('node:stream/consumers');
+
+const { readable, writable } = createPipe();
+const child = spawn(process.execPath, ['-e', `
+  const fs = require('node:fs');
+  const buffer = Buffer.alloc(1);
+  const count = fs.readSync(0, buffer, 0, 1, null);
+  fs.writeSync(1, buffer.subarray(0, count));
+`], {
+  stdio: [readable, 'pipe', 'inherit'],
+});
+
+writable.end('abc');
+const output = text(child.stdout);
+
+child.on('close', async () => {
+  console.log(await output); // Prints: a
+  console.log(await text(readable)); // Prints: bc
+});
+```
+
+```mjs
+import { spawn } from 'node:child_process';
+import { createPipe } from 'node:net';
+import { text } from 'node:stream/consumers';
+
+const { readable, writable } = createPipe();
+const child = spawn(process.execPath, ['-e', `
+  const fs = require('node:fs');
+  const buffer = Buffer.alloc(1);
+  const count = fs.readSync(0, buffer, 0, 1, null);
+  fs.writeSync(1, buffer.subarray(0, count));
+`], {
+  stdio: [readable, 'pipe', 'inherit'],
+});
+
+writable.end('abc');
+const output = text(child.stdout);
+
+child.on('close', async () => {
+  console.log(await output); // Prints: a
+  console.log(await text(readable)); // Prints: bc
+});
+```
+
 ## Class: `net.BlockList`
 
 <!-- YAML
@@ -2264,6 +2338,7 @@ net.isIPv6('fhqwhgads'); // returns false
 [`ERR_SOCKET_HANDLE_ADOPTED`]: errors.md#err_socket_handle_adopted
 [`EventEmitter`]: events.md#class-eventemitter
 [`child_process.fork()`]: child_process.md#child_processforkmodulepath-args-options
+[`child_process.spawn()`]: child_process.md#child_processspawncommand-args-options
 [`dns.lookup()`]: dns.md#dnslookuphostname-options-callback
 [`dns.lookup()` hints]: dns.md#supported-getaddrinfo-flags
 [`net.Server`]: #class-netserver
@@ -2307,6 +2382,7 @@ net.isIPv6('fhqwhgads'); // returns false
 [`socket.setKeepAlive(options)`]: #socketsetkeepaliveoptions
 [`socket.setTimeout()`]: #socketsettimeouttimeout-callback
 [`socket.setTimeout(timeout)`]: #socketsettimeouttimeout-callback
+[`stdio`]: child_process.md#optionsstdio
 [`stream.getDefaultHighWaterMark()`]: stream.md#streamgetdefaulthighwatermarkobjectmode
 [`worker_threads`]: worker_threads.md
 [`writable.destroy()`]: stream.md#writabledestroyerror

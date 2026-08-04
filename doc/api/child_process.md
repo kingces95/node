@@ -1055,7 +1055,8 @@ pipes between the parent and child. The value is one of the following:
    file descriptor is duplicated in the child process to the fd that
    corresponds to the index in the `stdio` array. The stream must have an
    underlying descriptor (file streams do not start until the `'open'` event has
-   occurred).
+   occurred). Pipe endpoints returned by [`net.createPipe()`][] may be passed
+   here.
    **NOTE:** While it is technically possible to pass `stdin` as a writable or
    `stdout`/`stderr` as readable, it is not recommended.
    Readable and writable streams are designed with distinct behaviors, and using
@@ -2374,6 +2375,7 @@ or [`child_process.fork()`][].
 [`maxBuffer` and Unicode]: #maxbuffer-and-unicode
 [`net.Server`]: net.md#class-netserver
 [`net.Socket`]: net.md#class-netsocket
+[`net.createPipe()`]: net.md#netcreatepipe
 [`options.detached`]: #optionsdetached
 [`process.disconnect()`]: process.md#processdisconnect
 [`process.env`]: process.md#processenv
