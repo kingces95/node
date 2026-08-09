@@ -1056,8 +1056,9 @@ pipes between the parent and child. The value is one of the following:
    corresponds to the index in the `stdio` array. The stream must have an
    underlying descriptor (file streams do not start until the `'open'` event has
    occurred). Pipe endpoints returned by [`net.createPipe()`][] may be passed
-   here. A readable pipe endpoint returned by [`net.createPipe()`][] must not
-   be flowing when it is passed here.
+   here. Socket endpoints returned by [`net.createSocketPair()`][] may be passed
+   here only at positions greater than or equal to `3`. A readable pipe endpoint
+   returned by [`net.createPipe()`][] must not be flowing when it is passed here.
    **NOTE:** While it is technically possible to pass `stdin` as a writable or
    `stdout`/`stderr` as readable, it is not recommended.
    Readable and writable streams are designed with distinct behaviors, and using
@@ -2383,6 +2384,7 @@ or [`child_process.fork()`][].
 [`net.Server`]: net.md#class-netserver
 [`net.Socket`]: net.md#class-netsocket
 [`net.createPipe()`]: net.md#netcreatepipe
+[`net.createSocketPair()`]: net.md#netcreatesocketpair
 [`options.detached`]: #optionsdetached
 [`process.disconnect()`]: process.md#processdisconnect
 [`process.env`]: process.md#processenv

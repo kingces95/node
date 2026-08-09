@@ -11,7 +11,7 @@
 The `node:net` module provides an asynchronous network API for creating
 stream-based TCP or [IPC][] servers ([`net.createServer()`][]) and clients
 ([`net.createConnection()`][]), and operating system pipe pairs
-([`net.createPipe()`][]).
+([`net.createPipe()`][]) and socket pairs ([`net.createSocketPair()`][]).
 
 It can be accessed using:
 
@@ -1030,7 +1030,7 @@ changes:
     description: The `family` property now returns a number instead of a string.
 -->
 
-* Returns: {Object}
+* Returns: {net.Socket\[]}
 
 Returns the bound `address`, the address `family` name and `port` of the
 socket as reported by the operating system:
@@ -2139,6 +2139,57 @@ Use `nc` to connect to a Unix domain socket server:
 nc -U /tmp/echo.sock
 ```
 
+## `net.createSocketPair()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Returns: {net.Socket\[]}
+  * {net.Socket} The first socket.
+  * {net.Socket} The second socket.
+
+The `net.createSocketPair()` method creates a connected pair of operating
+system sockets. The returned [`net.Socket`][] instances are owned by the current
+process and may be used to exchange bytes in either direction without binding a
+server or connecting a client. Either socket may be passed to
+[`child_process.spawn()`][] using the [`stdio`][] option as an fd greater than or
+equal to `3`.
+
+```cjs
+const { createSocketPair } = require('node:net');
+const { text } = require('node:stream/consumers');
+
+(async function() {
+  const [left, right] = createSocketPair();
+
+  const leftOutput = text(left);
+  const rightOutput = text(right);
+
+  left.end('hello right');
+  right.end('hello left');
+
+  console.log(await leftOutput); // Prints: hello left
+  console.log(await rightOutput); // Prints: hello right
+})();
+```
+
+```mjs
+import { createSocketPair } from 'node:net';
+import { text } from 'node:stream/consumers';
+
+const [left, right] = createSocketPair();
+
+const leftOutput = text(left);
+const rightOutput = text(right);
+
+left.end('hello right');
+right.end('hello left');
+
+console.log(await leftOutput); // Prints: hello left
+console.log(await rightOutput); // Prints: hello right
+```
+
 ## `net.createPipe()`
 
 <!-- YAML
@@ -2365,6 +2416,7 @@ net.isIPv6('fhqwhgads'); // returns false
 [`net.createConnection(port, host)`]: #netcreateconnectionport-host-connectlistener
 [`net.createPipe()`]: #netcreatepipe
 [`net.createServer()`]: #netcreateserveroptions-connectionlistener
+[`net.createSocketPair()`]: #netcreatesocketpair
 [`net.getDefaultAutoSelectFamily()`]: #netgetdefaultautoselectfamily
 [`net.getDefaultAutoSelectFamilyAttemptTimeout()`]: #netgetdefaultautoselectfamilyattempttimeout
 [`new net.Socket(options)`]: #new-netsocketoptions
