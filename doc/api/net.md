@@ -8,9 +8,10 @@
 
 <!-- source_link=lib/net.js -->
 
-The `node:net` module provides an asynchronous network API for creating stream-based
-TCP or [IPC][] servers ([`net.createServer()`][]) and clients
-([`net.createConnection()`][]).
+The `node:net` module provides an asynchronous network API for creating
+stream-based TCP or [IPC][] servers ([`net.createServer()`][]) and clients
+([`net.createConnection()`][]), and operating system pipe pairs
+([`net.createPipe()`][]) and socket pairs ([`net.createSocketPair()`][]).
 
 It can be accessed using:
 
@@ -96,6 +97,47 @@ added:
 
 Adds a rule to block the given IP address.
 
+### `blockList.addAddresses(addresses[, type])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `addresses` {string\[]|net.SocketAddress\[]} An array of IPv4 or IPv6
+  addresses.
+* `type` {string} Either `'ipv4'` or `'ipv6'`. **Default:** `'ipv4'`.
+
+Adds multiple address rules to the block list in a single operation.
+This is more efficient than calling `blockList.addAddress()` repeatedly
+when adding a large number of individual addresses, as the addresses
+are inserted under a single internal lock acquisition.
+
+### `blockList.addCIDR(cidr)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `cidr` {string} An IPv4 or IPv6 subnet in CIDR notation (e.g.
+  `'10.0.0.0/8'` or `'2001:db8::/32'`).
+
+Adds a subnet rule using CIDR notation. The address family is automatically
+detected from the address (IPv6 if the address contains `':'`, IPv4
+otherwise). This is equivalent to calling `blockList.addSubnet()` with
+the parsed network address, prefix length, and family.
+
+### `blockList.addCIDRs(cidrs)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `cidrs` {string\[]} An array of IPv4 or IPv6 subnets in CIDR notation.
+
+Adds multiple subnet rules using CIDR notation in a single call. The address
+family for each entry is automatically detected. This is equivalent to
+calling `blockList.addCIDR()` for each element of the array.
+
 ### `blockList.addRange(start, end[, type])`
 
 <!-- YAML
@@ -158,28 +200,13 @@ console.log(blockList.check('::ffff:7b7b:7b7b', 'ipv6')); // Prints: true
 console.log(blockList.check('::ffff:123.123.123.123', 'ipv6')); // Prints: true
 ```
 
-### `blockList.rules`
+### `blockList.clear()`
 
-<!-- YAML
-added:
-  - v15.0.0
-  - v14.18.0
+<!--
+added: REPLACEME
 -->
 
-* Type: {string\[]}
-
-The list of rules added to the blocklist.
-
-### `BlockList.isBlockList(value)`
-
-<!-- YAML
-added:
-  - v23.4.0
-  - v22.13.0
--->
-
-* `value` {any} Any JS value
-* Returns `true` if the `value` is a `net.BlockList`.
+Clears all rules from the `BlockList`.
 
 ### `blockList.fromJSON(value)`
 
@@ -204,6 +231,130 @@ blockList.fromJSON(JSON.stringify(data));
 ```
 
 * `value` Blocklist.rules
+
+### `BlockList.isBlockList(value)`
+
+<!-- YAML
+added:
+  - v23.4.0
+  - v22.13.0
+-->
+
+* `value` {any} Any JS value
+* Returns `true` if the `value` is a `net.BlockList`.
+
+### `BlockList.PRIVATE_RANGES`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {string\[]}
+
+A frozen array of CIDR strings representing private, loopback, and link-local
+IP address ranges. This can be passed to `blockList.addCIDRs()` to quickly
+populate a blocklist with all non-routable address ranges.
+
+The included ranges are:
+
+* `10.0.0.0/8` — RFC 1918 private IPv4
+* `172.16.0.0/12` — RFC 1918 private IPv4
+* `192.168.0.0/16` — RFC 1918 private IPv4
+* `127.0.0.0/8` — IPv4 loopback
+* `::1/128` — IPv6 loopback
+* `169.254.0.0/16` — IPv4 link-local
+* `fe80::/10` — IPv6 link-local
+* `fc00::/7` — IPv6 unique local (ULA)
+
+```js
+const blockList = new net.BlockList();
+blockList.addCIDRs(net.BlockList.PRIVATE_RANGES);
+
+console.log(blockList.check('10.0.0.1'));      // Prints: true
+console.log(blockList.check('127.0.0.1'));     // Prints: true
+console.log(blockList.check('8.8.8.8'));       // Prints: false
+```
+
+### `blockList.removeAddress(address[, type])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `address` {string|net.SocketAddress} An IPv4 or IPv6 address.
+* `type` {string} Either `'ipv4'` or `'ipv6'`. **Default:** `'ipv4'`.
+
+Removes a rule that was previously added with `blockList.addAddress()`. The
+address must match exactly the value used when the rule was added. If the
+specified address does not exist, this is a no-op.
+
+### `blockList.removeCIDR(cidr)`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `cidr` {string} An IPv4 or IPv6 subnet in CIDR notation (e.g.
+  `'10.0.0.0/8'` or `'2001:db8::/32'`).
+
+Removes a subnet rule using CIDR notation. The address family is automatically
+detected from the address. This is equivalent to calling
+`blockList.removeSubnet()` with the parsed network address, prefix length,
+and family. If the specified subnet does not exist, this is a no-op.
+
+### `blockList.removeRange(start, end[, type])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `start` {string|net.SocketAddress} The starting IPv4 or IPv6 address in the
+  range.
+* `end` {string|net.SocketAddress} The ending IPv4 or IPv6 address in the range.
+* `type` {string} Either `'ipv4'` or `'ipv6'`. **Default:** `'ipv4'`.
+
+Removes a rule that was previously added with `blockList.addRange()`. The `start`
+and `end` addresses must match exactly the values used when the rule was added.
+If the specified range does not exist, this is a no-op.
+
+### `blockList.removeSubnet(net, prefix[, type])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `net` {string|net.SocketAddress} The network IPv4 or IPv6 address.
+* `prefix` {number} The number of CIDR prefix bits. For IPv4, this
+  must be a value between `0` and `32`. For IPv6, this must be between
+  `0` and `128`.
+* `type` {string} Either `'ipv4'` or `'ipv6'`. **Default:** `'ipv4'`.
+
+Removes a rule that was previously added with `blockList.addSubnet()`. The
+network address and prefix must match exactly the values used when the rule was
+added. If the specified subnet does not exist, this is a no-op.
+
+### `blockList.rules`
+
+<!-- YAML
+added:
+  - v15.0.0
+  - v14.18.0
+-->
+
+* Type: {string\[]}
+
+The list of rules added to the blocklist.
+
+### `blockList.size`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Type: {number}
+
+The number of rules in the blocklist. This is equivalent to
+`blockList.rules.length` but does not allocate the rules array.
 
 ### `blockList.toJSON()`
 
@@ -451,6 +602,48 @@ changes:
 
 Calls [`server.close()`][] and returns a promise that fulfills when the
 server has closed.
+
+### `server[Symbol.asyncIterator]()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+> Stability: 1 - Experimental
+
+* Returns: {AsyncIterator} An async iterator that yields each incoming
+  [`net.Socket`][].
+
+Returns an async iterator over the server's incoming connections, allowing them
+to be consumed with `for await...of` as an alternative to the [`'connection'`][]
+event. Iteration ends when the server emits [`'close'`][], and rejects if the
+server emits [`'error'`][].
+
+The loop only advances to the next connection once the current iteration's body
+has finished awaiting, so connection handling should be dispatched to a separate
+async task rather than awaited inline. Otherwise connections are serialized:
+each one waits for the previous to be fully handled.
+
+```mjs
+import { createServer } from 'node:net';
+
+const server = createServer().listen(8124);
+
+async function handleConnection(socket) {
+  // ...handle the connection, awaiting as needed.
+  socket.end('hello world!');
+}
+
+for await (const socket of server) {
+  // Dispatch handling to a separate task so the loop keeps accepting
+  // connections instead of serializing them.
+  handleConnection(socket);
+}
+```
+
+The server does not stop accepting connections while the loop body runs, so a
+consumer slower than the connection rate can buffer them without bound. Use
+[`server.maxConnections`][] to bound concurrency.
 
 ### `server.getConnections(callback)`
 
@@ -770,9 +963,7 @@ threads.
 The socket must be a freshly accepted or created TCP connection: it must still
 be attached to a live handle, must not be connecting or destroyed, and must not
 have started reading or have buffered data. Otherwise `postMessage()` throws
-`ERR_WORKER_HANDLE_NOT_TRANSFERABLE`. Only TCP sockets are supported, and only
-on Unix-like platforms; on Windows `postMessage()` throws
-`ERR_WORKER_HANDLE_TRANSFER_UNSUPPORTED`.
+`ERR_WORKER_HANDLE_NOT_TRANSFERABLE`. Only TCP sockets are supported.
 
 ```cjs
 const net = require('node:net');
@@ -1490,7 +1681,9 @@ those platforms.
 #### `socket.setKeepAlive([options])`
 
 <!-- YAML
-added: v26.4.0
+added:
+ - v26.4.0
+ - v24.19.0
 -->
 
 * `options` {Object}
@@ -1512,7 +1705,9 @@ socket.setKeepAlive({ enable: true, initialDelay: 1000, interval: 1000, count: 1
 <!-- YAML
 added: v0.1.92
 changes:
-  - version: v26.4.0
+  - version:
+     - v26.4.0
+     - v24.19.0
     pr-url: https://github.com/nodejs/node/pull/63825
     description: Added the `interval` and `count` arguments to configure
                  `TCP_KEEPINTVL` and `TCP_KEEPCNT`.
@@ -1697,7 +1892,9 @@ This property represents the state of the connection as a string.
 ## Class: `net.BoundSocket`
 
 <!-- YAML
-added: v26.4.0
+added:
+ - v26.4.0
+ - v24.19.0
 -->
 
 Allows for the synchronous creation of a pre-bound socket, that can be passed
@@ -1705,9 +1902,20 @@ to `listen()` or `new net.Socket()` later on. For `listen()` this enables
 synchronous port reservation, while for `new net.Socket()`, it allows control
 over the local egress port/IP, via `bind(2)` semantics.
 
+A `BoundSocket` binds either a TCP endpoint (`host` or `port`) or a
+Unix domain/named-pipe endpoint (`path`); the two are mutually exclusive. For a
+`path`, the file system entry is reserved in the constructor, so conflicts such
+as `EADDRINUSE` throw synchronously exactly as a TCP bind does. On Linux a
+leading `'\0'` in `path` selects the abstract namespace (no file system entry);
+an abstract path on any other platform throws [`ERR_INVALID_ARG_VALUE`][].
+
 Adoption transfers ownership of the socket; afterwards `address()` and `close()`
 throw [`ERR_SOCKET_HANDLE_ADOPTED`][]. A handle that is never adopted must be
-closed to avoid leaking the socket.
+closed to avoid leaking the socket. Closing a pipe `BoundSocket` removes its
+file system entry; abstract and TCP binds have none to remove.
+
+When a pipe `BoundSocket` bound to a source `path` is adopted as a client, that
+path is reported as the socket's `localAddress` once it connects.
 
 When an adopted `BoundSocket` connects to a numeric IP literal, `connect(2)` is
 issued synchronously, so [`socket.localAddress`][] is resolved once
@@ -1728,7 +1936,13 @@ server.listen(bound); // Adopt as a server, or pass to new net.Socket() instead.
 ### `new net.BoundSocket([options])`
 
 <!-- YAML
-added: v26.4.0
+added:
+ - v26.4.0
+ - v24.19.0
+changes:
+  - version: v26.7.0
+    pr-url: https://github.com/nodejs/node/pull/64399
+    description: The `path` option is supported.
 -->
 
 * `options` {Object}
@@ -1743,23 +1957,49 @@ added: v26.4.0
   * `reusePort` {boolean} Sets `SO_REUSEPORT`, allowing multiple sockets to bind
     the same address and port for kernel-level load balancing. Support is
     platform-dependent. **Default:** `false`.
+  * `path` {string} Binds a Unix domain socket (or Windows named pipe) at the
+    given path instead of a TCP endpoint. A leading `'\0'` selects the Linux
+    abstract namespace. Mutually exclusive with `host`, `port`, `ipv6Only`, and
+    `reusePort`; combining them throws [`ERR_INVALID_ARG_VALUE`][].
 
 ### `boundSocket.address()`
 
 <!-- YAML
-added: v26.4.0
+added:
+ - v26.4.0
+ - v24.19.0
+changes:
+  - version: v26.7.0
+    pr-url: https://github.com/nodejs/node/pull/64399
+    description: The bound path is returned for a pipe bind.
 -->
 
-* Returns: {Object} An object with `address`, `family`, and `port` properties,
-  as [`server.address()`][] returns.
+* Returns: {Object|string} For a TCP bind, an object with `address`, `family`,
+  and `port` properties, as [`server.address()`][] returns. For a pipe bind, the
+  bound path string, as [`server.address()`][] returns for a pipe server.
 
 Returns the bound local address. When bound with `port: 0`, `port` is the
 OS-assigned ephemeral port.
 
+### `boundSocket.isPipe`
+
+<!-- YAML
+added: v26.7.0
+-->
+
+* {boolean}
+
+`true` when the socket was bound with a `path` (a Unix domain socket or Windows
+named pipe), `false` for a TCP bind. The getter's presence on
+`net.BoundSocket.prototype` also serves as a capability probe for `path`
+support.
+
 ### `boundSocket.fd()`
 
 <!-- YAML
-added: v26.4.0
+added:
+ - v26.4.0
+ - v24.19.0
 -->
 
 * Returns: {integer} The underlying OS file descriptor, or `-1` on platforms
@@ -1774,7 +2014,9 @@ to the adopting [`net.Server`][] or [`net.Socket`][] and `fd()` throws
 ### `boundSocket.close()`
 
 <!-- YAML
-added: v26.4.0
+added:
+ - v26.4.0
+ - v24.19.0
 -->
 
 Releases the bound socket. Only needed when the handle is never adopted.
@@ -1782,7 +2024,9 @@ Releases the bound socket. Only needed when the handle is never adopted.
 ### `boundSocket[Symbol.dispose]()`
 
 <!-- YAML
-added: v26.4.0
+added:
+ - v26.4.0
+ - v24.19.0
 -->
 
 Closes the handle if it has not been adopted or closed; otherwise a no-op.
@@ -2064,7 +2308,7 @@ Creates a new TCP or [IPC][] server.
 If `allowHalfOpen` is set to `true`, when the other end of the socket
 signals the end of transmission, the server will only send back the end of
 transmission when [`socket.end()`][] is explicitly called. For example, in the
-context of TCP, when a FIN packed is received, a FIN packed is sent
+context of TCP, when a FIN packet is received, a FIN packet is sent
 back only when [`socket.end()`][] is explicitly called. Until then the
 connection is half-closed (non-readable but still writable). See [`'end'`][]
 event and [RFC 1122][half-closed] (section 4.2.2.13) for more information.
@@ -2137,6 +2381,170 @@ Use `nc` to connect to a Unix domain socket server:
 
 ```bash
 nc -U /tmp/echo.sock
+```
+
+Endpoint pairs created by [`net.createPipe()`][] and
+[`net.createSocketPair()`][] are owned by the current process. Use normal
+stream idioms such as `end()` to finish writing and stream consumption to drain
+a readable endpoint. Use `resume()` when an unread readable endpoint should be
+drained without observing its data, and use `destroy()` when an endpoint is no
+longer needed without being naturally ended or drained.
+
+## `net.createSocketPair()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Returns: {net.Socket\[]}
+  * {net.Socket} The first socket.
+  * {net.Socket} The second socket.
+
+The `net.createSocketPair()` method creates a connected pair of operating
+system sockets. The returned [`net.Socket`][] instances are owned by the current
+process and may be used to exchange bytes in either direction without binding a
+server or connecting a client. Either socket may be passed to a Node.js child
+process over an IPC channel using [`subprocess.send()`][].
+
+```cjs
+const { spawn } = require('node:child_process');
+const { createSocketPair } = require('node:net');
+
+const [left, right] = createSocketPair();
+
+const child = spawn(process.execPath, ['-e', `
+  process.on('message', (message, socket) => {
+    socket.on('data', (chunk) => {
+      socket.write(chunk.toString().toUpperCase());
+    });
+    socket.resume();
+    process.send('ready');
+  });
+`], {
+  stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+});
+
+child.once('message', () => {
+  left.write('hello');
+});
+
+left.once('data', (chunk) => {
+  console.log(chunk.toString()); // Prints: HELLO
+  left.destroy();
+  child.kill();
+});
+
+child.send('socket', right, { keepOpen: false });
+```
+
+```mjs
+import { spawn } from 'node:child_process';
+import { createSocketPair } from 'node:net';
+
+const [left, right] = createSocketPair();
+
+const child = spawn(process.execPath, ['-e', `
+  process.on('message', (message, socket) => {
+    socket.on('data', (chunk) => {
+      socket.write(chunk.toString().toUpperCase());
+    });
+    socket.resume();
+    process.send('ready');
+  });
+`], {
+  stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+});
+
+child.once('message', () => {
+  left.write('hello');
+});
+
+left.once('data', (chunk) => {
+  console.log(chunk.toString()); // Prints: HELLO
+  left.destroy();
+  child.kill();
+});
+
+child.send('socket', right, { keepOpen: false });
+```
+
+## `net.createPipe()`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* Returns: {Object}
+  * `readable` {net.Socket} The readable end of the pipe.
+  * `writable` {net.Socket} The writable end of the pipe.
+
+The `net.createPipe()` method creates an operating system pipe pair. The
+returned `readable` and `writable` streams are owned by the current process and
+may be passed to [`child_process.spawn()`][] using the [`stdio`][] option.
+
+When a pipe endpoint is passed to [`child_process.spawn()`][], the child process
+leases the endpoint until the child process exits. A pipe endpoint may be leased
+to only one child process at a time. Pipe endpoints created by this module are
+not supported by synchronous child process APIs such as
+[`child_process.spawnSync()`][].
+
+Readable pipe endpoints must not be flowing when they are passed to
+[`child_process.spawn()`][]. The child process [`'close'`
+event][child-process-close] does not wait for leased endpoints to close and
+does not resume them after the child process exits.
+
+When a `readable` endpoint is passed as child stdin or as another child fd, the
+child leases a readable handle. When a `writable` endpoint is passed as child
+stdout, stderr, or another child fd, the child leases a writable handle. A
+`readable` endpoint may not be passed as child stdout or stderr, and a
+`writable` endpoint may not be passed as child stdin.
+
+```cjs
+const { spawn } = require('node:child_process');
+const { createPipe } = require('node:net');
+const { text } = require('node:stream/consumers');
+
+const { readable, writable } = createPipe();
+const child = spawn(process.execPath, ['-e', `
+  const fs = require('node:fs');
+  const buffer = Buffer.alloc(1);
+  const count = fs.readSync(0, buffer, 0, 1, null);
+  fs.writeSync(1, buffer.subarray(0, count));
+`], {
+  stdio: [readable, 'pipe', 'inherit'],
+});
+
+const output = text(child.stdout);
+writable.end('abc');
+
+child.on('close', async () => {
+  console.log(await output); // Prints: a
+  console.log(await text(readable)); // Prints: bc
+});
+```
+
+```mjs
+import { spawn } from 'node:child_process';
+import { createPipe } from 'node:net';
+import { text } from 'node:stream/consumers';
+
+const { readable, writable } = createPipe();
+const child = spawn(process.execPath, ['-e', `
+  const fs = require('node:fs');
+  const buffer = Buffer.alloc(1);
+  const count = fs.readSync(0, buffer, 0, 1, null);
+  fs.writeSync(1, buffer.subarray(0, count));
+`], {
+  stdio: [readable, 'pipe', 'inherit'],
+});
+
+const output = text(child.stdout);
+writable.end('abc');
+
+child.on('close', async () => {
+  console.log(await output); // Prints: a
+  console.log(await text(readable)); // Prints: bc
+});
 ```
 
 ## `net.getDefaultAutoSelectFamily()`
@@ -2247,6 +2655,82 @@ net.isIPv6('::1'); // returns true
 net.isIPv6('fhqwhgads'); // returns false
 ```
 
+## `net/promises` API
+
+<!-- YAML
+added: REPLACEME
+-->
+
+> Stability: 1 - Experimental
+
+The `net/promises` API provides a set of `net` functions that return `Promise`
+objects rather than relying on events. The API is accessible via
+`require('node:net').promises` or `require('node:net/promises')`.
+
+### `netPromises.connect(options)`
+
+### `netPromises.connect(path)`
+
+### `netPromises.connect(port[, host])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `options` {Object} Accepts the same arguments as [`net.connect()`][]. May
+  include a `signal` {AbortSignal} that can be used to abort an in-progress
+  connection attempt.
+* Returns: {Promise} Fulfills with a connected [`net.Socket`][].
+
+A promise-based alternative to [`net.connect()`][]. The returned promise is
+fulfilled with the socket once its [`'connect'`][] event fires, and is rejected
+if the connection fails or the `signal` is aborted. When the promise rejects,
+the underlying socket is destroyed.
+
+This API is named for the action it performs and awaits — connecting — to
+parallel [`netPromises.listen()`][]. It is not named `createConnection()`,
+because that name belongs to the socket-factory taxonomy of the callback API,
+which has no counterpart here.
+
+```mjs
+import { connect } from 'node:net/promises';
+
+const socket = await connect({ port: 8124 });
+socket.write('hello world!');
+socket.end();
+```
+
+### `netPromises.listen([options])`
+
+<!-- YAML
+added: REPLACEME
+-->
+
+* `options` {Object} Accepts the same options as [`net.createServer()`][] and
+  [`server.listen()`][], plus:
+  * `connectionListener` {Function} Automatically set as a listener for the
+    [`'connection'`][] event.
+  * `signal` {AbortSignal} An `AbortSignal` that may be used to abort the
+    server. Aborting before the server is listening rejects the returned
+    promise with an `AbortError`; aborting at any later point closes the
+    server, matching the `signal` option of [`server.listen()`][].
+* Returns: {Promise} Fulfills with a listening [`net.Server`][].
+
+Creates a [`net.Server`][] and begins listening. The returned promise is
+fulfilled with the server once its [`'listening'`][] event fires, and is
+rejected if the server fails to bind or the `signal` is aborted before it is
+listening. When the promise rejects, the server is closed.
+
+The resolved server is async iterable, so incoming connections can be consumed
+with `for await...of` (see `server[Symbol.asyncIterator]()`).
+
+```mjs
+import { listen } from 'node:net/promises';
+
+const server = await listen({ port: 8124 });
+console.log('listening on', server.address().port);
+```
+
 [IPC]: #ipc-support
 [Identifying paths for IPC connections]: #identifying-paths-for-ipc-connections
 [RFC 8305]: https://www.rfc-editor.org/rfc/rfc8305.txt
@@ -2262,9 +2746,12 @@ net.isIPv6('fhqwhgads'); // returns false
 [`'listening'`]: #event-listening
 [`'timeout'`]: #event-timeout
 [`BoundSocket`]: #class-netboundsocket
+[`ERR_INVALID_ARG_VALUE`]: errors.md#err_invalid_arg_value
 [`ERR_SOCKET_HANDLE_ADOPTED`]: errors.md#err_socket_handle_adopted
 [`EventEmitter`]: events.md#class-eventemitter
 [`child_process.fork()`]: child_process.md#child_processforkmodulepath-args-options
+[`child_process.spawn()`]: child_process.md#child_processspawncommand-args-options
+[`child_process.spawnSync()`]: child_process.md#child_processspawnsynccommand-args-options
 [`dns.lookup()`]: dns.md#dnslookuphostname-options-callback
 [`dns.lookup()` hints]: dns.md#supported-getaddrinfo-flags
 [`net.Server`]: #class-netserver
@@ -2277,9 +2764,12 @@ net.isIPv6('fhqwhgads'); // returns false
 [`net.createConnection(options)`]: #netcreateconnectionoptions-connectlistener
 [`net.createConnection(path)`]: #netcreateconnectionpath-connectlistener
 [`net.createConnection(port, host)`]: #netcreateconnectionport-host-connectlistener
+[`net.createPipe()`]: #netcreatepipe
 [`net.createServer()`]: #netcreateserveroptions-connectionlistener
+[`net.createSocketPair()`]: #netcreatesocketpair
 [`net.getDefaultAutoSelectFamily()`]: #netgetdefaultautoselectfamily
 [`net.getDefaultAutoSelectFamilyAttemptTimeout()`]: #netgetdefaultautoselectfamilyattempttimeout
+[`netPromises.listen()`]: #netpromiseslistenoptions
 [`new net.Socket(options)`]: #new-netsocketoptions
 [`readable.setEncoding()`]: stream.md#readablesetencodingencoding
 [`server.address()`]: #serveraddress
@@ -2291,6 +2781,7 @@ net.isIPv6('fhqwhgads'); // returns false
 [`server.listen(path)`]: #serverlistenpath-backlog-callback
 [`server.listen(port)`]: #serverlistenport-host-backlog-callback
 [`server.maxConnections`]: #servermaxconnections
+[`subprocess.send()`]: child_process.md#subprocesssendmessage-sendhandle-options-callback
 [`socket(7)`]: https://man7.org/linux/man-pages/man7/socket.7.html
 [`socket.connect()`]: #socketconnect
 [`socket.connect(options)`]: #socketconnectoptions-connectlistener
@@ -2309,6 +2800,7 @@ net.isIPv6('fhqwhgads'); // returns false
 [`socket.setTimeout()`]: #socketsettimeouttimeout-callback
 [`socket.setTimeout(timeout)`]: #socketsettimeouttimeout-callback
 [`stream.getDefaultHighWaterMark()`]: stream.md#streamgetdefaulthighwatermarkobjectmode
+[`stdio`]: child_process.md#optionsstdio
 [`worker_threads`]: worker_threads.md
 [`writable.destroy()`]: stream.md#writabledestroyerror
 [`writable.destroyed`]: stream.md#writabledestroyed
@@ -2316,6 +2808,7 @@ net.isIPv6('fhqwhgads'); // returns false
 [`writable.writableLength`]: stream.md#writablewritablelength
 [dot-decimal notation]: https://en.wikipedia.org/wiki/Dot-decimal_notation
 [half-closed]: https://tools.ietf.org/html/rfc1122
+[child-process-close]: child_process.md#event-close
 [stream_writable_write]: stream.md#writablewritechunk-encoding-callback
 [unspecified IPv4 address]: https://en.wikipedia.org/wiki/0.0.0.0
 [unspecified IPv6 address]: https://en.wikipedia.org/wiki/IPv6_address#Unspecified_address

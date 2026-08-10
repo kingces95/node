@@ -118,6 +118,7 @@ void TCPWrap::Initialize(Local<Object> target,
   SetProtoMethod(isolate, t, "setTypeOfService", SetTypeOfService);
   SetProtoMethod(isolate, t, "getTypeOfService", GetTypeOfService);
   SetProtoMethod(isolate, t, "reset", Reset);
+  SetMethod(context, target, "pairSockets", Pair);
 
 #ifdef _WIN32
   SetProtoMethod(isolate, t, "setSimultaneousAccepts", SetSimultaneousAccepts);
@@ -154,6 +155,7 @@ void TCPWrap::RegisterExternalReferences(ExternalReferenceRegistry* registry) {
   registry->Register(SetKeepAlive);
   registry->Register(SetTypeOfService);
   registry->Register(GetTypeOfService);
+  registry->Register(Pair);
   registry->Register(Reset);
 #ifdef _WIN32
   registry->Register(SetSimultaneousAccepts);
@@ -219,6 +221,58 @@ void TCPWrap::SetKeepAlive(const FunctionCallbackInfo<Value>& args) {
   if (args[3]->IsUint32()) count = args[3].As<Uint32>()->Value();
   int err = uv_tcp_keepalive_ex(&wrap->handle_, enable, delay, interval, count);
   args.GetReturnValue().Set(err);
+}
+
+static void CloseSocket(uv_os_sock_t socket) {
+#ifdef _WIN32
+  closesocket(socket);
+#else
+  close(socket);
+#endif
+}
+
+void TCPWrap::Pair(const FunctionCallbackInfo<Value>& args) {
+  Environment* env = Environment::GetCurrent(args);
+  uv_os_sock_t fds[2];
+  TCPWrap* wrap0;
+  TCPWrap* wrap1;
+  int err;
+
+  CHECK(args[0]->IsObject());
+  CHECK(args[1]->IsObject());
+  ASSIGN_OR_RETURN_UNWRAP(&wrap0, args[0].As<Object>());
+  ASSIGN_OR_RETURN_UNWRAP(&wrap1, args[1].As<Object>());
+
+  err = uv_socketpair(SOCK_STREAM,
+                      0,
+                      fds,
+                      UV_NONBLOCK_PIPE,
+                      UV_NONBLOCK_PIPE);
+  if (err) {
+    env->ThrowUVException(err, "uv_socketpair");
+    return;
+  }
+
+  err = uv_tcp_open(&wrap0->handle_, fds[0]);
+  if (err)
+    goto error_close_fds;
+
+  err = uv_tcp_open(&wrap1->handle_, fds[1]);
+  if (err)
+    goto error_close_wrap0;
+
+  return;
+
+error_close_wrap0:
+  wrap0->Close();
+  goto error_close_fd1;
+
+error_close_fds:
+  CloseSocket(fds[0]);
+
+error_close_fd1:
+  CloseSocket(fds[1]);
+  env->ThrowUVException(err, "uv_tcp_open");
 }
 
 // TODO(amyssnippet): This implementation uses raw setsockopt/getsockopt calls
@@ -381,57 +435,66 @@ void TCPWrap::Open(const FunctionCallbackInfo<Value>& args) {
 }
 
 BaseObject::TransferMode TCPWrap::GetTransferMode() const {
-#ifdef _WIN32
-  // Re-adopting a socket into another thread's event loop requires
-  // re-associating it with that loop's IOCP, which needs same-process
-  // WSADuplicateSocket support that is not wired up yet. The JS net layer
-  // throws a clearer error before reaching here; this is the backstop for the
-  // low-level `socket._handle` transfer path.
-  return TransferMode::kDisallowCloneAndTransfer;
-#else
   // Only a live handle that is not already being torn down can be transferred.
   // Higher-level guards (no buffered reads, no pending writes) are enforced by
   // the JS net.Socket/net.Server layer before a handle reaches here.
   if (!HandleWrap::IsAlive(this) || IsHandleClosing())
     return TransferMode::kDisallowCloneAndTransfer;
   return TransferMode::kTransferable;
-#endif
 }
 
 std::unique_ptr<worker::TransferData> TCPWrap::TransferForMessaging() {
-#ifdef _WIN32
-  return {};
-#else
   CHECK_NE(GetTransferMode(), TransferMode::kDisallowCloneAndTransfer);
 
   uv_os_fd_t fd;
   if (uv_fileno(reinterpret_cast<uv_handle_t*>(&handle_), &fd) != 0) return {};
 
-  // dup() the descriptor so the receiving event loop owns an independent
-  // reference to the same socket. We then close the source handle, which
-  // renders it unusable on this side (true transfer semantics) while the dup
-  // keeps the underlying socket alive for the destination thread.
-  int dup_fd = dup(fd);
-  if (dup_fd < 0) return {};
+#ifdef _WIN32
+  // A socket that is already associated with an IOCP cannot be associated with
+  // another one. Create a same-process duplicate that is not associated with
+  // any IOCP yet; uv_tcp_open() will associate it with the receiving loop.
+  WSAPROTOCOL_INFOW protocol_info;
+  uv_os_sock_t source_socket = reinterpret_cast<uv_os_sock_t>(fd);
+  if (WSADuplicateSocketW(
+          source_socket, GetCurrentProcessId(), &protocol_info) != 0) {
+    return {};
+  }
+  uv_os_sock_t duplicate = WSASocketW(FROM_PROTOCOL_INFO,
+                                      FROM_PROTOCOL_INFO,
+                                      FROM_PROTOCOL_INFO,
+                                      &protocol_info,
+                                      0,
+                                      WSA_FLAG_OVERLAPPED);
+  if (duplicate == static_cast<uv_os_sock_t>(-1)) return {};
+#else
+  // Unix threads share the descriptor table, so dup() creates an independent
+  // reference to the same socket for the receiving event loop.
+  uv_os_sock_t duplicate = dup(fd);
+  if (duplicate < 0) return {};
+#endif
 
   SocketType type =
       provider_type() == ProviderType::PROVIDER_TCPSERVERWRAP ? SERVER : SOCKET;
 
-  // Stop watching the fd and tear down the source handle.
+  // Stop watching the original socket and tear down the source handle. The
+  // duplicate keeps the underlying socket alive until the destination adopts
+  // it, or until TransferData is destroyed if the message is not delivered.
   Close();
 
-  return std::make_unique<TransferData>(dup_fd, type);
-#endif
+  return std::make_unique<TransferData>(duplicate, type);
 }
 
 TCPWrap::TransferData::~TransferData() {
-  // Only reached if the message was never delivered (e.g. the destination port
-  // closed in flight); close the dup'd fd so it is not leaked.
-  if (fd_ >= 0) {
+#ifdef _WIN32
+  if (socket_ != static_cast<uv_os_sock_t>(-1))
+    CHECK_EQ(0, closesocket(socket_));
+#else
+  if (socket_ >= 0) {
     uv_fs_t req;
-    CHECK_EQ(0, uv_fs_close(nullptr, &req, fd_, nullptr));
+    CHECK_EQ(0, uv_fs_close(nullptr, &req, socket_, nullptr));
     uv_fs_req_cleanup(&req);
   }
+#endif
 }
 
 BaseObjectPtr<BaseObject> TCPWrap::TransferData::Deserialize(
@@ -454,10 +517,14 @@ BaseObjectPtr<BaseObject> TCPWrap::TransferData::Deserialize(
   TCPWrap* wrap = BaseObject::Unwrap<TCPWrap>(obj);
   if (wrap == nullptr) return {};
 
-  if (uv_tcp_open(&wrap->handle_, fd_) != 0) return {};
+  if (uv_tcp_open(&wrap->handle_, socket_) != 0) return {};
 
-  wrap->set_fd(fd_);
-  fd_ = -1;  // Ownership has been handed to the new handle.
+#ifdef _WIN32
+  socket_ = static_cast<uv_os_sock_t>(-1);
+#else
+  wrap->set_fd(socket_);
+  socket_ = -1;
+#endif
   return BaseObjectPtr<BaseObject>(wrap);
 }
 
